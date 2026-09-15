@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}People · DeskTrack{% endblock %}
+{% block body %}
+<header class="page">
+  <div>
+    <h1>People</h1>
+    <p class="muted">Add employees, then run <code>python agent.py username</code> on their PC.</p>
+  </div>
+</header>
+<section class="split">
+  <form class="card" method="post" action="/api/people">
+    <h2>Add employee</h2>
+    {% if error == "exists" %}<p class="error">That username is already taken.</p>{% endif %}
+    {% if error == "missing" %}<p class="error">Name and username are required.</p>{% endif %}
+    <label>Full name <input name="name" required></label>
+    <label>Username <input name="username" required placeholder="e.g. riya"></label>
+    <label>Department <input name="department" value="Engineering"></label>
+    <label>Temp password <input name="password" value="emp123"></label>
+    <button type="submit" class="full">Create</button>
+  </form>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Dept</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+fetch("/api/people").then(r => r.json()).then((data) => {
+  document.getElementById("rows").innerHTML = data.people.map((p) =>
+    `<tr>
+      <td>${p.role === "employee" ? `<a href="/hr/employee/${p.id}">${esc(p.name)}</a>` : esc(p.name)}</td>
+      <td><code>${esc(p.username)}</code></td>
+      <td>${esc(p.role)}</td>
+      <td>${esc(p.department)}</td>
+    </tr>`
+  ).join("");
+});
+</script>
+{% endblock %}

@@ -1,0 +1,31 @@
+services:
+  desktrack:
+    build: .
+    image: desktrack:latest
+    container_name: desktrack
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DESKTRACK_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8000
+      RELOAD: "false"
+      SEED_DEMO: "false"
+      # SQLite file on the persistent volume
+      DATABASE_URL: sqlite:////app/data/office.db
+    volumes:
+      - desktrack_data:/app/data
+      - desktrack_models:/app/yolo_model
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+
+volumes:
+  desktrack_data:
+  desktrack_models:

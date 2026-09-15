@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}DeskTrack{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="{% if user %}has-nav{% endif %}{% block body_class %}{% endblock %}">
+  {% if user %}
+  <aside class="nav">
+    <div class="brand">DeskTrack</div>
+    {% if user.role == 'hr' %}
+      <a href="/hr" class="{% if request.url.path == '/hr' %}active{% endif %}">Live board</a>
+      <a href="/hr/reports" class="{% if request.url.path.startswith('/hr/reports') %}active{% endif %}">Daily report</a>
+      <a href="/hr/alerts" class="{% if request.url.path.startswith('/hr/alerts') %}active{% endif %}">HR pings</a>
+      <a href="/hr/people" class="{% if request.url.path.startswith('/hr/people') %}active{% endif %}">People</a>
+      <a href="/hr/export.csv">Export CSV</a>
+    {% else %}
+      <a href="/me" class="active">My desk</a>
+    {% endif %}
+    <div class="nav-foot">
+      <span>{{ user.name }}</span>
+      <span class="muted">{{ user.role }}</span>
+      <a href="/logout">Log out</a>
+    </div>
+  </aside>
+  {% endif %}
+  <main>
+    {% block body %}{% endblock %}
+  </main>
+  <script src="/static/ui.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

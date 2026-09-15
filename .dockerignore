@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+office.db
+*.db
+frontend/node_modules
+frontend/dist
+static
+templates
+scripts
+agent-transcripts
+DEPLOY.md
+*.md
+.cursor
+yolo_model

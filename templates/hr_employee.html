@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ employee.name }} · DeskTrack{% endblock %}
+{% block body %}
+<header class="page">
+  <div>
+    <p class="eyebrow"><a class="back" href="/hr">← Live board</a></p>
+    <h1>{{ employee.name }}</h1>
+    <p class="muted">{{ employee.department }} · today’s live desk view, seated time, and apps. Past days are on Daily report.</p>
+  </div>
+</header>
+<div class="kpis" id="kpis"></div>
+<section class="monitor-card card" id="live-monitor">
+  <h2>Live monitoring</h2>
+  <div class="video-wrap" id="video-wrap" title="Click for fullscreen">
+    <img id="feed" alt="Live camera overlay">
+    <p id="feed-empty" class="muted">No live camera. The employee must be clocked in with the agent running.</p>
+    <span class="fs-hint">Click for fullscreen</span>
+  </div>
+  <p class="legend">
+    <span class="leg"><span class="dot green"></span>Desk zone</span>
+    <span class="leg"><span class="dot red"></span>At desk</span>
+    <span class="leg"><span class="dot blue"></span>Outside</span>
+    <span class="leg hint">Same overlay the employee sees · click for fullscreen</span>
+  </p>
+</section>
+<section class="split">
+  <article class="card split-card">
+    <h2>Apps today</h2>
+    <div class="split-scroll">
+      <ul id="apps" class="apps"></ul>
+    </div>
+  </article>
+  <article class="card split-card">
+    <h2>Recent activity</h2>
+    <div class="split-scroll">
+      <ol id="timeline" class="timeline"></ol>
+    </div>
+  </article>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const userId = {{ employee.id }};
+
+async function refresh() {
+  const res = await fetch(`/api/employee/${userId}`);
+  const p = await res.json();
+  document.getElementById("kpis").innerHTML = `
+    <div class="kpi"><span>Status</span><strong>${badge(p.status)}</strong></div>
+    <div class="kpi"><span>Seated</span><strong>${esc(p.today.seated)}</strong></div>
+    <div class="kpi"><span>Work apps</span><strong>${esc(p.today.work)}</strong></div>
+    <div class="kpi" title="Share of active time in work apps vs other apps (YouTube, Instagram, etc.)">
+      <span>Useful apps</span><strong>${p.today.useful_pct}%</strong>
+    </div>
+    <div class="kpi"><span>Break used</span><strong>${esc(p.today.break_used || "0m")}</strong></div>`;
+  const max = Math.max(...p.today.apps.map((a) => a.seconds), 1);
+  document.getElementById("apps").innerHTML = p.today.apps.map((a) =>
+    `<li>
+      <div>
+        <span>${esc(a.app)}</span>
+        <span class="bar"><i style="width:${Math.round(a.seconds / max * 100)}%"></i></span>
+      </div>
+      <span>${esc(a.label)}</span>
+    </li>`).join("") || "<li>No app time yet today</li>";
+  const groups = [];
+  for (const row of p.timeline) {
+    const seat = row.present === 1 ? "in seat" : row.present === 0 ? "away" : "unknown";
+    const app = row.app || "—";
+    const t = (row.created_at || "").slice(11, 19);
+    const last = groups[groups.length - 1];
+    if (last && last.app === app && last.seat === seat) {
+      last.count += 1;
+      last.from = t;
+    } else {
+      groups.push({ app, seat, from: t, to: t, count: 1 });
+    }
+  }
+  document.getElementById("timeline").innerHTML = groups.map((g) => {
+    const when = g.count > 1 ? `${esc(g.to)} – ${esc(g.from)}` : esc(g.to);
+    const extra = g.count > 1 ? ` · ${g.count} samples` : "";
+    return `<li><em>${when}</em><span>${esc(g.app)} · ${esc(g.seat)}${extra}</span></li>`;
+  }).join("") || "<li class='muted'>No samples yet</li>";
+}
+
+function refreshFeed() {
+  const img = document.getElementById("feed");
+  const empty = document.getElementById("feed-empty");
+  const url = `/api/hr/preview/${userId}?` + Date.now();
+  const probe = new Image();
+  probe.onload = () => { img.src = url; img.style.display = "block"; empty.style.display = "none"; };
+  probe.onerror = () => { img.style.display = "none"; empty.style.display = "block"; };
+  probe.src = url;
+}
+
+document.getElementById("video-wrap").onclick = () => {
+  const wrap = document.getElementById("video-wrap");
+  if (!document.fullscreenElement) {
+    (wrap.requestFullscreen || wrap.webkitRequestFullscreen).call(wrap);
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  }
+};
+
+refresh();
+refreshFeed();
+setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 5000);
+setInterval(() => { if (document.visibilityState === "visible") refreshFeed(); }, 600);
+</script>
+{% endblock %}

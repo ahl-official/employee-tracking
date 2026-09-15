@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Live board · DeskTrack{% endblock %}
+{% block body %}
+<header class="page">
+  <div>
+    <h1>Live board</h1>
+    <p class="muted">Live camera overlay for each clocked-in employee, plus today’s seated time. Totals reset at midnight IST.</p>
+  </div>
+</header>
+<p id="hours" class="banner" hidden>Outside work hours — away pings are paused.</p>
+<div class="kpis" id="kpis"></div>
+<div id="alerts" class="alerts"></div>
+<div id="team" class="grid"></div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/hr-live.js"></script>
+{% endblock %}

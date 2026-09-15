@@ -1,0 +1,19 @@
+[Unit]
+Description=DeskTrack presence API
+After=network.target
+
+[Service]
+Type=simple
+User=desktrack
+Group=desktrack
+WorkingDirectory=/opt/desktrack
+EnvironmentFile=/opt/desktrack/.env
+ExecStart=/opt/desktrack/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=*
+Restart=always
+RestartSec=3
+
+# YOLO / OpenCV can use a fair amount of RAM
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

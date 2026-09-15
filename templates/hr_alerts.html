@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}HR pings · DeskTrack{% endblock %}
+{% block body %}
+<header class="page">
+  <div>
+    <h1>HR pings</h1>
+    <p class="muted">Created after the 30-minute break allowance is used, if someone stays away during work hours and is still clocked in.</p>
+  </div>
+</header>
+<div id="list" class="stack"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function refresh() {
+  const res = await fetch("/api/team");
+  if (!res.ok) return;
+  const data = await res.json();
+  document.getElementById("list").innerHTML = data.alerts.map((a) => `
+    <article class="card alert-row ${a.seen ? "seen" : ""}">
+      <div>
+        <strong>${esc(a.name)}</strong>
+        <p>${esc(a.message)}</p>
+        <p class="muted">${prettyTime(a.created_at)}</p>
+      </div>
+      ${a.seen ? "<span class='muted'>Seen</span>" : `<button onclick="ack(${a.id})">Acknowledge</button>`}
+    </article>`).join("") || "<p class='muted'>No pings yet.</p>";
+}
+async function ack(id) {
+  await fetch(`/api/alerts/${id}/seen`, { method: "POST" });
+  refresh();
+}
+refresh();
+setInterval(refresh, 4000);
+</script>
+{% endblock %}

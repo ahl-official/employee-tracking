@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Sign in · DeskTrack{% endblock %}
+{% block body %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Workplace presence</p>
+    <h1>See who is at their desk, what they are working on, and when they go missing.</h1>
+    <ul>
+      <li>Open the link, log in, click Clock in. The browser asks to use your camera. Keep that tab open while you work. Nothing is recorded to disk.</li>
+      <li>HR sees the same live desk view while you are clocked in.</li>
+      <li>30 minutes of away time is a break, used whenever you leave the seat.</li>
+      <li>Clock out for lunch so a longer absence does not page HR.</li>
+    </ul>
+  </div>
+  <form class="card login" method="post" action="/login">
+    <h2>Sign in</h2>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <label>Username <input id="username" name="username" autocomplete="username" required></label>
+    <label>Password <input id="password" name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Continue</button>
+    <div class="demo-row">
+      <button type="button" class="ghost" onclick="fill('hr','hr123')">HR demo</button>
+      <button type="button" class="ghost" onclick="fill('saniya','emp123')">Employee demo</button>
+    </div>
+    <p class="hint">Local demo accounts. HR <code>hr / hr123</code> · Employee <code>saniya / emp123</code></p>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+function fill(user, pass) {
+  const u = document.getElementById("username");
+  const p = document.getElementById("password");
+  u.value = user;
+  p.value = pass;
+  u.dispatchEvent(new Event("input", { bubbles: true }));
+  p.dispatchEvent(new Event("input", { bubbles: true }));
+  u.form.submit();
+}
+</script>
+{% endblock %}

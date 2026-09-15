@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Daily report · DeskTrack{% endblock %}
+{% block body %}
+<header class="page">
+  <div>
+    <h1>Daily report</h1>
+    <p class="muted">One calendar day at a time (IST). Pick a previous day to review it — it is never mixed with today.</p>
+  </div>
+  <div class="actions">
+    <label class="day-pick">Day <input type="date" id="day"></label>
+    <a class="btn" id="csv" href="/hr/export.csv">Download CSV</a>
+  </div>
+</header>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Employee</th><th>Dept</th><th id="status-col">Now</th><th>Seated</th>
+        <th>Active</th><th>Idle</th><th>Break used</th><th>Work apps</th><th>Other</th><th title="Share of active time in work apps vs other apps">Useful apps</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const dayInput = document.getElementById("day");
+const csvLink = document.getElementById("csv");
+dayInput.value = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+dayInput.max = dayInput.value;
+dayInput.addEventListener("change", refresh);
+
+async function refresh() {
+  const day = dayInput.value;
+  const res = await fetch(`/api/report?day=${encodeURIComponent(day)}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  csvLink.href = `/hr/export.csv?day=${encodeURIComponent(data.day)}`;
+  document.getElementById("status-col").textContent = data.is_today ? "Now" : "Last that day";
+  document.getElementById("rows").innerHTML = data.team.map((p) => `
+    <tr>
+      <td><a href="/hr/employee/${p.id}">${esc(p.name)}</a></td>
+      <td>${esc(p.department)}</td>
+      <td>${badge(p.status)}</td>
+      <td>${esc(p.today.seated)}</td>
+      <td>${esc(p.today.active)}</td>
+      <td>${esc(p.today.idle)}</td>
+      <td>${esc(p.today.break_used || "0m")}</td>
+      <td>${esc(p.today.work)}</td>
+      <td>${esc(p.today.other)}</td>
+      <td>${p.today.useful_pct}%</td>
+    </tr>`).join("");
+}
+refresh();
+setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 5000);
+</script>
+{% endblock %}

@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block title %}My desk · DeskTrack{% endblock %}
+{% block body_class %} desk-page{% endblock %}
+{% block body %}
+<header class="page">
+  <h1>My desk</h1>
+  <div class="actions">
+    <button id="clock">Clock in</button>
+  </div>
+</header>
+<div id="agent" class="callout" hidden></div>
+<div class="kpis" id="kpis"></div>
+<div class="desk-grid">
+  <section class="monitor-card card">
+    <h2>Live monitoring</h2>
+    <div class="video-wrap" id="video-wrap" title="Click for fullscreen">
+      <video id="cam" autoplay playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <p id="feed-empty" class="muted">Clock in — Chrome will ask to use your camera. Allow it.</p>
+      <span class="fs-hint">Click for fullscreen</span>
+    </div>
+    <p class="legend">
+      <span class="leg"><span class="dot green"></span>Desk zone</span>
+      <span class="leg"><span class="dot red"></span>At desk</span>
+      <span class="leg"><span class="dot blue"></span>Outside</span>
+      <span class="leg hint">Click for fullscreen</span>
+    </p>
+  </section>
+  <div class="side">
+    <article class="card now-card" id="now"></article>
+    <article class="card apps-card">
+      <h2>Apps today</h2>
+      <ul id="apps" class="apps"></ul>
+    </article>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let state = {};
+let stream = null;
+let camTried = false;
+let lastPresent = null;
+let lastMarks = [];
+let lastSize = { w: 640, h: 480 };
+let lastInput = Date.now();
+["mousemove", "keydown", "click", "scroll"].forEach((ev) =>
+  window.addEventListener(ev, () => { lastInput = Date.now(); }, { passive: true })
+);
+
+const video = document.getElementById("cam");
+const overlay = document.getElementById("overlay");
+const empty = document.getElementById("feed-empty");
+
+async function post(url, action) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || "Could not update.");
+    return false;
+  }
+  await refresh();
+  return true;
+}
+
+function showCam(on) {
+  video.style.display = on ? "block" : "none";
+  empty.style.display = on ? "none" : "block";
+}
+
+function stopCamera() {
+  if (stream) {
+    stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+  }
+  video.srcObject = null;
+  showCam(false);
+  const ctx = overlay.getContext("2d");
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+}
+
+function mapRect(x, y, w, h, fw, fh, cw, ch) {
+  const scale = Math.min(cw / fw, ch / fh);
+  const dw = fw * scale, dh = fh * scale;
+  const ox = (cw - dw) / 2, oy = (ch - dh) / 2;
+  const mx = fw - x - w;
+  return { x: ox + mx * scale, y: oy + y * scale, w: w * scale, h: h * scale };
+}
+
+function drawOverlay(present) {
+  const wrap = document.getElementById("video-wrap");
+  overlay.width = wrap.clientWidth;
+  overlay.height = wrap.clientHeight;
+  const ctx = overlay.getContext("2d");
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!stream) return;
+  const fw = lastSize.w || video.videoWidth || 640;
+  const fh = lastSize.h || video.videoHeight || 480;
+  const zone = mapRect(fw * 0.08, fh * 0.04, fw * 0.84, fh * 0.94, fw, fh, overlay.width, overlay.height);
+  ctx.strokeStyle = "#22c55e";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(zone.x, zone.y, zone.w, zone.h);
+  lastMarks.forEach((m) => {
+    const r = mapRect(m.x, m.y, m.w, m.h, fw, fh, overlay.width, overlay.height);
+    ctx.strokeStyle = m.at_desk ? "#ef4444" : "#3b82f6";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.font = "600 14px Segoe UI, sans-serif";
+    ctx.fillStyle = m.at_desk ? "#ef4444" : "#3b82f6";
+    ctx.fillText(m.at_desk ? "At desk" : (m.label || "Outside"), r.x, Math.max(18, r.y - 6));
+  });
+  ctx.font = "600 18px Segoe UI, sans-serif";
+  ctx.fillStyle = present ? "#22c55e" : "#ef4444";
+  ctx.fillText(present ? "Status: PRESENT" : "Status: ABSENT", 16, 32);
+}
+
+async function startCamera() {
+  if (stream) return true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    empty.textContent = "This browser cannot use the camera. Try Chrome.";
+    showCam(false);
+    return false;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+    showCam(true);
+    empty.textContent = "Clock in — Chrome will ask to use your camera. Allow it.";
+    return true;
+  } catch (err) {
+    stream = null;
+    showCam(false);
+    if (err && err.name === "NotAllowedError") {
+      empty.textContent = "Camera was blocked. Click the camera icon in the address bar and allow access, then Clock in again.";
+      alert("Please Allow camera access for this site, then click Clock in again.");
+    } else {
+      empty.textContent = "Could not open the camera. Check that nothing else is using it.";
+    }
+    return false;
+  }
+}
+
+async function sendFrame() {
+  if (!stream || !state.clocked_in || video.readyState < 2) return;
+  const shot = document.createElement("canvas");
+  shot.width = video.videoWidth || 640;
+  shot.height = video.videoHeight || 480;
+  shot.getContext("2d").drawImage(video, 0, 0, shot.width, shot.height);
+  const dataUrl = shot.toDataURL("image/jpeg", 0.7);
+  const image = dataUrl.split(",")[1];
+  const idle_seconds = Math.max(0, Math.floor((Date.now() - lastInput) / 1000));
+  try {
+    const res = await fetch("/api/me/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image,
+        idle_seconds,
+        app: "Browser",
+        window_title: document.title,
+        device: /Mobi|Android|iPhone/i.test(navigator.userAgent) ? "phone" : "laptop",
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.present !== undefined) lastPresent = data.present;
+    if (data.marks) lastMarks = data.marks;
+    if (data.width && data.height) lastSize = { w: data.width, h: data.height };
+  } catch {
+    /* keep the live view even if one ping fails */
+  }
+  drawOverlay(lastPresent);
+}
+
+async function toggleClock() {
+  const goingOut = !!state.clocked_in;
+  if (goingOut) {
+    const ok = await post("/api/clock", "out");
+    if (ok) {
+      stopCamera();
+      camTried = false;
+    }
+    return;
+  }
+  const cam = await startCamera();
+  if (!cam) return;
+  const ok = await post("/api/clock", "in");
+  if (!ok) stopCamera();
+}
+
+async function refresh() {
+  const res = await fetch("/api/me");
+  const p = await res.json();
+  state = p;
+  document.getElementById("clock").textContent = p.clocked_in ? "Clock out" : "Clock in";
+  document.getElementById("kpis").innerHTML = `
+    <div class="kpi"><span>Status</span><strong>${badge(p.status)}</strong></div>
+    <div class="kpi"><span>Seated</span><strong>${esc(p.today.seated)}</strong></div>
+    <div class="kpi"><span>Active</span><strong>${esc(p.today.active)}</strong></div>
+    <div class="kpi"><span>Break left</span><strong>${esc(p.today.break_left || "30m")}</strong></div>
+    <div class="kpi" title="Share of active time in work apps vs other apps"><span>Useful apps</span><strong>${p.today.useful_pct}%</strong></div>`;
+  const present = p.present === 1 ? "yes" : p.present === 0 ? "no" : "unknown";
+  const seatClass = p.present === 1 ? "yes" : p.present === 0 ? "no" : "";
+  document.getElementById("now").innerHTML = `
+    <h2>Right now</h2>
+    <div class="now-grid">
+      <div class="now-row"><span>In seat</span><b class="seat ${seatClass}">${present}</b></div>
+      <div class="now-row"><span>Device</span><b>${esc(p.device || "—")}</b></div>
+      <div class="now-row"><span>App</span><b title="${esc(p.app || "")}">${esc(p.app || "—")}</b></div>
+      <div class="now-row"><span>Idle</span><b>${p.idle_seconds || 0}s</b></div>
+    </div>
+    <p class="now-title" title="${esc(p.window_title || "")}">${esc(p.window_title || "No window title")}</p>
+    <p class="now-ago">${ago(p.updated)}</p>`;
+  document.getElementById("apps").innerHTML = p.today.apps.map((a) =>
+    `<li><span>${esc(a.app)}</span><span>${esc(a.label)}</span></li>`).join("") || "<li>No samples yet.</li>";
+  if (p.clocked_in && !stream && !camTried) {
+    camTried = true;
+    startCamera();
+  }
+  if (!p.clocked_in && stream) stopCamera();
+  const box = document.getElementById("agent");
+  box.hidden = false;
+  if (!p.clocked_in) {
+    box.className = "callout";
+    box.textContent = "Clocked out. Click Clock in — the browser will ask to use your camera. Click Allow.";
+    empty.textContent = "Clock in — Chrome will ask to use your camera. Allow it.";
+  } else if (stream) {
+    box.className = "callout ok";
+    box.textContent = "Camera is on. Keep this tab open while you work. Clock out to turn it off. Video is not saved.";
+  } else {
+    box.className = "callout";
+    box.textContent = "You are clocked in. Click Clock in again if the camera is not showing, and Allow access.";
+  }
+}
+
+document.getElementById("clock").onclick = () => toggleClock();
+document.getElementById("video-wrap").onclick = () => {
+  const wrap = document.getElementById("video-wrap");
+  if (!document.fullscreenElement) {
+    (wrap.requestFullscreen || wrap.webkitRequestFullscreen).call(wrap);
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  }
+};
+window.addEventListener("pagehide", stopCamera);
+refresh();
+setInterval(refresh, 3000);
+setInterval(sendFrame, 1500);
+setInterval(() => drawOverlay(lastPresent), 300);
+</script>
+{% endblock %}
