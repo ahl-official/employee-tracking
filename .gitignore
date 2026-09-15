@@ -3,9 +3,13 @@ __pycache__/
 .venv/
 *.pyc
 yolo_model/
+face_models/
 frontend/node_modules/
 frontend/dist/
 .env
 *.log
+agent/config.ini
+agent/offline_queue.db
+agent/__pycache__/
 
 

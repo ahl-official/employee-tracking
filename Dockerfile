@@ -29,11 +29,11 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY analytics.py config.py database.py detector.py main.py models.py passwords.py ./
+COPY analytics.py config.py database.py detector.py face_id.py main.py models.py passwords.py ./
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
 # Models download on first start if missing; optional pre-bake via volume
-RUN mkdir -p yolo_model data
+RUN mkdir -p yolo_model data face_models
 
 EXPOSE 8000
 

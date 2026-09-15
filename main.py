@@ -27,6 +27,7 @@ import uvicorn
 import analytics
 import config
 import detector
+import face_id
 from database import init_db, utc_now, _keep_demo_fresh
 from models import Alert, Heartbeat, SessionLocal, User, WorkSession
 
@@ -181,6 +182,7 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
         "agent_live": viewing_today and age is not None and age <= config.OFFLINE_AFTER_SECONDS,
         "camera_blocked": bool(PREVIEW_META.get(emp.id, {}).get("blocked")),
         "has_preview": emp.id in PREVIEW_FRAMES,
+        "face_enrolled": face_id.has_enrollment(emp.id),
         "day": day.isoformat(),
         "is_today": viewing_today,
         "today": summary,
@@ -362,9 +364,53 @@ def api_me_preview(request: Request, db: Session = Depends(get_db)):
     return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/me/face")
+def api_me_face_status(request: Request, db: Session = Depends(get_db)):
+    user = require(request, db, "employee")
+    if not user:
+        return JSONResponse({"ok": False}, status_code=401)
+    count = face_id.enrollment_count(user.id)
+    ready = face_id.has_enrollment(user.id)
+    return {
+        "ok": True,
+        "enrolled": ready,
+        "count": count,
+        "needed": max(0, face_id.MIN_ENROLL_SAMPLES - count),
+        "min_samples": face_id.MIN_ENROLL_SAMPLES,
+    }
+
+
+@app.post("/api/me/face/enroll")
+def api_me_face_enroll(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Capture face samples for this employee only."""
+    user = require(request, db, "employee")
+    if not user:
+        return JSONResponse({"ok": False}, status_code=401)
+    try:
+        raw = base64.b64decode(payload.get("image") or "")
+        frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    except Exception:
+        frame = None
+    if frame is None:
+        return JSONResponse({"ok": False, "error": "bad image"}, status_code=400)
+    _, yunet = get_detector()
+    result = face_id.enroll_from_frame(user.id, frame, yunet)
+    status = 200 if result.get("ok") else 400
+    return JSONResponse(result, status_code=status)
+
+
+@app.delete("/api/me/face")
+def api_me_face_clear(request: Request, db: Session = Depends(get_db)):
+    user = require(request, db, "employee")
+    if not user:
+        return JSONResponse({"ok": False}, status_code=401)
+    face_id.clear_enrollment(user.id)
+    return {"ok": True}
+
+
 @app.post("/api/me/track")
 def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
-    """Browser camera frames while the employee is clocked in. Nothing is stored as video."""
+    """Browser/agent camera frames while clocked in. Nothing is stored as video."""
     user = require(request, db, "employee")
     if not user:
         return JSONResponse({"ok": False}, status_code=401)
@@ -380,6 +426,18 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         return JSONResponse({"ok": False, "error": "bad image"}, status_code=400)
     net, yunet = get_detector()
     present, annotated, _score, marks = detector.annotate(frame, net, yunet)
+    identity = {"required": False, "matched": True, "score": 0.0, "reason": "not_enrolled"}
+    if face_id.has_enrollment(user.id):
+        matched, score, reason = face_id.verify(user.id, frame, yunet, require_desk_zone=True)
+        identity = {"required": True, "matched": matched, "score": round(score, 3), "reason": reason}
+        # Only this employee counts as present
+        present = bool(matched)
+        for m in marks:
+            if m.get("at_desk"):
+                m["label"] = "You" if matched else "Not you"
+        status = "Status: PRESENT (you)" if present else f"Status: ABSENT ({reason})"
+        color = (0, 255, 0) if present else (0, 0, 255)
+        cv2.putText(annotated, status, (12, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     ok, buf = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
     if ok:
         PREVIEW_FRAMES[user.id] = buf.tobytes()
@@ -402,7 +460,14 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
     summary = analytics.summarize(db, user.id, start, end)
     maybe_alert(db, user, bool(present), True, summary["break_left_seconds"])
     db.commit()
-    return {"ok": True, "present": bool(present), "marks": marks, "width": int(frame.shape[1]), "height": int(frame.shape[0])}
+    return {
+        "ok": True,
+        "present": bool(present),
+        "marks": marks,
+        "identity": identity,
+        "width": int(frame.shape[1]),
+        "height": int(frame.shape[0]),
+    }
 
 
 @app.get("/api/hr/preview/{user_id}")

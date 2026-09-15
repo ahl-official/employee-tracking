@@ -25,6 +25,7 @@ services:
     volumes:
       - desktrack_data:/app/data
       - desktrack_models:/app/yolo_model
+      - desktrack_faces:/app/face_models
     # Soft cap so DeskTrack cannot starve the whole VPS
     mem_limit: 1024m
     memswap_limit: 1280m
@@ -38,3 +39,4 @@ services:
 volumes:
   desktrack_data:
   desktrack_models:
+  desktrack_faces:

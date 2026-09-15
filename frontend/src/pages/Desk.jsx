@@ -28,6 +28,9 @@ export default function Desk() {
   const [me, setMe] = useState(null);
   const [camOn, setCamOn] = useState(false);
   const [emptyMsg, setEmptyMsg] = useState("Clock in — Chrome will ask to use your camera. Allow it.");
+  const [face, setFace] = useState({ enrolled: false, count: 0, needed: 5 });
+  const [faceMsg, setFaceMsg] = useState("");
+  const [enrolling, setEnrolling] = useState(false);
 
   const showCam = useCallback((on) => {
     setCamOn(on);
@@ -80,7 +83,12 @@ export default function Desk() {
   const startCamera = useCallback(async () => {
     if (streamRef.current) return true;
     if (!navigator.mediaDevices?.getUserMedia) {
-      setEmptyMsg("This browser cannot use the camera. Try Chrome.");
+      const insecure = typeof window !== "undefined" && !window.isSecureContext;
+      setEmptyMsg(
+        insecure
+          ? "Camera needs HTTPS (or localhost). Open DeskTrack over https://… — plain http://IP blocks the camera in Chrome."
+          : "This browser cannot use the camera. Try Chrome or Edge."
+      );
       showCam(false);
       return false;
     }
@@ -112,6 +120,11 @@ export default function Desk() {
     }
   }, [showCam]);
 
+  const refreshFace = useCallback(async () => {
+    const { ok, data } = await api("/api/me/face");
+    if (ok) setFace(data);
+  }, []);
+
   const refresh = useCallback(async () => {
     const { ok, data } = await api("/api/me");
     if (!ok) return;
@@ -126,6 +139,57 @@ export default function Desk() {
       setEmptyMsg("Clock in — Chrome will ask to use your camera. Allow it.");
     }
   }, [startCamera, stopCamera]);
+
+  async function enrollFaceOnce() {
+    const video = videoRef.current;
+    if (!streamRef.current || !video || video.readyState < 2) {
+      const cam = await startCamera();
+      if (!cam) {
+        setFaceMsg("Allow the camera first, then enroll.");
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    setEnrolling(true);
+    setFaceMsg("Hold still — capturing your face…");
+    try {
+      for (let i = 0; i < 8; i++) {
+        const v = videoRef.current;
+        if (!v || v.readyState < 2) break;
+        const shot = document.createElement("canvas");
+        shot.width = v.videoWidth || 480;
+        shot.height = v.videoHeight || 360;
+        shot.getContext("2d").drawImage(v, 0, 0, shot.width, shot.height);
+        const image = shot.toDataURL("image/jpeg", 0.7).split(",")[1];
+        const { ok, data } = await api("/api/me/face/enroll", {
+          method: "POST",
+          body: JSON.stringify({ image }),
+        });
+        if (!ok) {
+          setFaceMsg(data.error || "Could not enroll. Face the camera.");
+          break;
+        }
+        setFace({
+          enrolled: !!data.ready,
+          count: data.count || 0,
+          needed: data.needed ?? 0,
+        });
+        setFaceMsg(data.message || "Saved.");
+        if (data.ready) break;
+        await new Promise((r) => setTimeout(r, 350));
+      }
+      await refreshFace();
+    } finally {
+      setEnrolling(false);
+    }
+  }
+
+  async function clearFace() {
+    if (!confirm("Remove your enrolled face? Presence will not be identity-checked until you enroll again.")) return;
+    await api("/api/me/face", { method: "DELETE", body: "{}" });
+    setFaceMsg("Face enrollment cleared.");
+    refreshFace();
+  }
 
   async function toggleClock() {
     const goingOut = !!meRef.current?.clocked_in;
@@ -181,6 +245,7 @@ export default function Desk() {
     const onHide = () => stopCamera();
     window.addEventListener("pagehide", onHide);
     refresh();
+    refreshFace();
     const t1 = setInterval(refresh, 3000);
     const t2 = setInterval(async () => {
       const video = videoRef.current;
@@ -227,7 +292,7 @@ export default function Desk() {
       clearInterval(t3);
       stopCamera();
     };
-  }, [refresh, stopCamera, drawOverlay]);
+  }, [refresh, refreshFace, stopCamera, drawOverlay]);
 
   function toggleFullscreen() {
     const wrap = wrapRef.current;
@@ -264,6 +329,28 @@ export default function Desk() {
         </div>
       </header>
       <div className={calloutOk ? "callout ok" : "callout"}>{callout}</div>
+      <div className="card face-card">
+        <h2>Your face (identity)</h2>
+        <p className="hint">
+          Enroll once so only <strong>you</strong> count as present. Someone else at your desk will not count.
+        </p>
+        <p className="face-status">
+          {face.enrolled
+            ? `Enrolled (${face.count} samples) — identity check is on.`
+            : `Not enrolled yet — need about ${face.needed || 5} face samples.`}
+        </p>
+        {faceMsg ? <p className="hint">{faceMsg}</p> : null}
+        <div className="actions">
+          <button type="button" onClick={enrollFaceOnce} disabled={enrolling}>
+            {enrolling ? "Enrolling…" : face.enrolled ? "Add more samples" : "Enroll face"}
+          </button>
+          {face.enrolled ? (
+            <button type="button" className="ghost" onClick={clearFace}>
+              Clear face
+            </button>
+          ) : null}
+        </div>
+      </div>
       <div className="kpis">
         <div className="kpi">
           <span>Status</span>
