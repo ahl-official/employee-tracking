@@ -5,7 +5,8 @@ services:
     container_name: desktrack
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Host port 8010 → app 8000 (avoids clashing with other services on :8000)
+      - "8010:8000"
     env_file:
       - .env
     environment:
