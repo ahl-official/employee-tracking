@@ -1,57 +1,46 @@
 # DeskTrack Windows Agent
 
-Background webcam tracker for **one employee**. Works with sleep-block and offline queue. Presence counts only when **your enrolled face** is at the desk.
+Background webcam tracker. Presence counts only when **your enrolled face** is at the desk.
 
-## 1. Enroll your face (website)
+## Why “Enroll face” is missing on the website
 
-1. Open https://desktrack.hairscalptradingco.com (or your server URL)
-2. Log in as the employee
-3. On **My desk**, use **Enroll face** — look at the camera until it says ready (about 5 samples)
-4. Only after enrollment will “someone else at your desk” **not** count as you
+The VPS must be updated first:
 
-## 2. Install agent on the PC
-
-```bat
-cd agent
-copy config.example.ini config.ini
-notepad config.ini
-python -m pip install -r requirements.txt
+```bash
+cd /opt/desktrack
+git pull
+docker compose up -d --build
 ```
 
-Edit `config.ini`:
+Then hard-refresh the site (`Ctrl+F5`). On **My desk** you should see **Your face (identity)** and an **Enroll face** button. It is not a separate browser popup — click the button.
 
-```ini
-[server]
-url = https://desktrack.hairscalptradingco.com
+## Employee setup (no Git / no full project needed)
 
-[auth]
-username = your_username
-password = your_password
-```
+### Option A — one installer (easiest)
 
-## 3. Run
+1. HR downloads this file from the repo and shares it (email / shared drive):  
+   `agent/Install-DeskTrack-Agent.bat`
+2. Employee needs **Python 3** installed ([python.org](https://www.python.org/downloads/) — tick *Add to PATH*).
+3. Employee double-clicks **Install-DeskTrack-Agent.bat**.
+4. Enter server URL (default is fine) + username + password.
+5. Installer downloads the agent, installs packages, creates a Desktop shortcut.
 
-Double-click `Start DeskTrack Agent.bat`  
-or:
+Then:
 
-```bat
-python desktrack_agent.py
-```
+1. Open https://desktrack.hairscalptradingco.com → log in → **Enroll face**
+2. Start **DeskTrack Agent** from the Desktop and leave it open while working
 
-Keep the window open while working. The agent:
+### Option B — zip folder
 
-- Opens the webcam
-- Clocks you in (if `auto_clock_in = true`)
+1. HR zips the `agent` folder from the project (or from GitHub → Code → Download ZIP → take the `agent` folder).
+2. Copy zip to the employee PC, unzip.
+3. Run `Install-DeskTrack-Agent.bat` **or** copy `config.example.ini` → `config.ini`, edit login, then `pip install -r requirements.txt` and `Start DeskTrack Agent.bat`.
+
+Employees do **not** need the full codebase, Docker, or VPS access.
+
+## What the agent does
+
+- Uses the PC webcam
 - Blocks Windows sleep while running
-- Sends frames every ~2s
-- If Wi‑Fi drops, queues frames and uploads later
-
-## 4. Stop
-
-Press `Ctrl+C` in the agent window (sleep is allowed again).
-
-## Notes
-
-- PC **fully shut down** still cannot track (nothing is running).
-- Use camera index `1` in config if the wrong webcam opens.
-- Face models are stored on the **server** under `face_models/`.
+- Queues frames if Wi‑Fi drops, uploads later
+- Server checks identity against enrolled face

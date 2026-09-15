@@ -329,6 +329,12 @@ export default function Desk() {
         </div>
       </header>
       <div className={calloutOk ? "callout ok" : "callout"}>{callout}</div>
+      {!face.enrolled ? (
+        <div className="callout face-needed">
+          <strong>Face enrollment required.</strong> Click <em>Enroll face</em> below, allow the camera,
+          and look at the screen until it says enrolled. Only your face will count as present.
+        </div>
+      ) : null}
       <div className="card face-card">
         <h2>Your face (identity)</h2>
         <p className="hint">
