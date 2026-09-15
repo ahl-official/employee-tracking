@@ -58,6 +58,11 @@ def ensure_model() -> None:
 
 def load_net():
     ensure_model()
+    # Keep OpenCV on one thread — lower RAM/CPU on small VPS
+    try:
+        cv2.setNumThreads(1)
+    except Exception:
+        pass
     net = cv2.dnn.readNetFromONNX(str(ONNX_PATH))
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)

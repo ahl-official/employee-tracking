@@ -86,7 +86,7 @@ export default function Desk() {
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 360 } },
         audio: false,
       });
       streamRef.current = stream;
@@ -194,7 +194,7 @@ export default function Desk() {
       shot.width = video.videoWidth || 640;
       shot.height = video.videoHeight || 480;
       shot.getContext("2d").drawImage(video, 0, 0, shot.width, shot.height);
-      const image = shot.toDataURL("image/jpeg", 0.7).split(",")[1];
+      const image = shot.toDataURL("image/jpeg", 0.55).split(",")[1];
       const idle_seconds = Math.max(0, Math.floor((Date.now() - lastInput.current) / 1000));
       try {
         const { data } = await api("/api/me/track", {
@@ -215,7 +215,7 @@ export default function Desk() {
         /* keep the live view even if one ping fails */
       }
       drawOverlay(lastPresent.current);
-    }, 1500);
+    }, 2000);
     const t3 = setInterval(() => drawOverlay(lastPresent.current), 300);
     return () => {
       ["mousemove", "keydown", "click", "scroll"].forEach((ev) => window.removeEventListener(ev, bump));
