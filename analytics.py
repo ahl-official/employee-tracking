@@ -174,33 +174,45 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
     )
     seated = active = idle = work = other = away = 0.0
     apps: dict[str, float] = {}
-    cap = config.HEARTBEAT_SECONDS * 4
     sleep_gap = float(getattr(config, "SLEEP_GAP_SECONDS", 45))
-    for i, row in enumerate(rows):
-        if i + 1 < len(rows):
-            gap = (as_dt(rows[i + 1].created_at) - as_dt(row.created_at)).total_seconds()
-        else:
-            gap = float(config.HEARTBEAT_SECONDS)
-        # Long gap = laptop sleep / lid closed → Idle KPI (not "looking away")
-        if gap > sleep_gap:
-            idle += min(gap, 4 * 3600)
-            delta = float(config.HEARTBEAT_SECONDS)
-        else:
-            delta = min(max(gap, 0), cap)
+    # Cap awake segments just under sleep threshold so seated/apps accumulate
+    cap = sleep_gap
+    now = datetime.now(timezone.utc)
+
+    def credit(row, delta: float) -> None:
+        nonlocal seated, active, idle, work, other, away
+        if delta <= 0:
+            return
         raw_app = (row.app or "").strip() or "unknown"
         key = app_key(raw_app)
-        # Always attribute apps from agent/browser samples (even brief away)
-        apps[key] = apps.get(key, 0) + delta
         if row.present == 1:
             seated += delta
-            # While at desk and PC awake → Active (mouse idle no longer counts)
             active += delta
+            apps[key] = apps.get(key, 0) + delta
             if classify_app(raw_app, row.window_title) == "work":
                 work += delta
             else:
                 other += delta
         elif row.present == 0:
             away += delta
+            # Away time does not count as app-use for "Apps today"
+        else:
+            apps[key] = apps.get(key, 0) + delta
+
+    for i, row in enumerate(rows):
+        if i + 1 < len(rows):
+            gap = (as_dt(rows[i + 1].created_at) - as_dt(row.created_at)).total_seconds()
+        else:
+            # Live tail until now (or day end) so counters move while you work
+            gap = (min(now, end) - as_dt(row.created_at)).total_seconds()
+            gap = max(gap, float(config.HEARTBEAT_SECONDS))
+        if gap > sleep_gap:
+            # PC sleep / offline — Idle only; do not credit seated/apps across the nap
+            idle += min(gap, 4 * 3600)
+            credit(row, float(config.HEARTBEAT_SECONDS))
+        else:
+            credit(row, min(max(gap, 0), cap))
+
     all_apps = sorted(apps.items(), key=lambda item: item[1], reverse=True)
     useful = (work / (work + other) * 100) if (work + other) else 0
     allowance = config.BREAK_ALLOWANCE_SECONDS
@@ -222,5 +234,6 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         "apps": [
             {"app": pretty_app_name(name), "seconds": sec, "label": fmt_hours(sec)}
             for name, sec in all_apps
+            if sec >= 1
         ],
     }

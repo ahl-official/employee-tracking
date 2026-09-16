@@ -164,14 +164,14 @@ def enroll_from_frame(user_id: int, frame, yunet) -> dict:
     }
 
 
-def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[bool, float, str]:
+def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[bool, float, str, tuple[int, int, int, int] | None]:
     """
-    Return (matched, score, reason).
+    Return (matched, score, reason, box_xywh).
     matched=True only when this user's enrolled face is seen (and optionally in desk zone),
     or briefly held after a good match so looking away does not flip to Break.
     """
     if not has_enrollment(user_id):
-        return False, 0.0, "not_enrolled"
+        return False, 0.0, "not_enrolled", None
 
     data = np.load(model_path(user_id))
     embeds = data["embeds"]
@@ -181,14 +181,15 @@ def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[
 
     if not boxes:
         if now - _last_match_at.get(user_id, 0) < hold:
-            return True, 0.0, "hold"
-        return False, 0.0, "no_face"
+            return True, 0.0, "hold", None
+        return False, 0.0, "no_face", None
 
     height, width = frame.shape[:2]
     zone = detector.desk_zone(width, height)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     best = 0.0
     best_in_zone = False
+    best_box: tuple[int, int, int, int] | None = None
 
     for x, y, w, h in boxes:
         in_zone = detector._in_zone((x, y, w, h), zone)
@@ -208,21 +209,47 @@ def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[
             if score > best:
                 best = score
                 best_in_zone = in_zone
+                best_box = (int(x), int(y), int(w), int(h))
 
     if best >= MATCH_THRESHOLD and (not require_desk_zone or best_in_zone):
         _last_match_at[user_id] = now
-        return True, best, "matched"
+        return True, best, "matched", best_box
 
     if best >= MATCH_THRESHOLD and require_desk_zone and not best_in_zone:
         if now - _last_match_at.get(user_id, 0) < hold:
-            return True, best, "hold"
-        return False, best, "outside_zone"
+            return True, best, "hold", best_box
+        return False, best, "outside_zone", best_box
 
     # Face seen but not this employee
     if best > 0.35 and boxes:
         _last_match_at.pop(user_id, None)
-        return False, best, "mismatch"
+        return False, best, "mismatch", best_box
 
     if now - _last_match_at.get(user_id, 0) < hold:
-        return True, best, "hold"
-    return False, best, "mismatch"
+        return True, best, "hold", best_box
+    return False, best, "mismatch", best_box
+
+
+def mark_identity_boxes(marks: list, matched: bool, matched_box: tuple[int, int, int, int] | None) -> list:
+    """Only the enrolled employee may be labeled At desk / You."""
+    out = []
+    for m in marks:
+        item = dict(m)
+        if not matched or matched_box is None:
+            item["at_desk"] = False
+            if item.get("label") in {"Employee", "At desk", "You"} or m.get("at_desk"):
+                item["label"] = "Other"
+            out.append(item)
+            continue
+        mx, my, mw, mh = matched_box
+        cx = item.get("x", 0) + item.get("w", 0) / 2
+        cy = item.get("y", 0) + item.get("h", 0) / 2
+        if mx <= cx <= mx + mw and my <= cy <= my + mh:
+            item["at_desk"] = True
+            item["label"] = "You"
+        else:
+            item["at_desk"] = False
+            item["label"] = "Other"
+        out.append(item)
+    return out
+

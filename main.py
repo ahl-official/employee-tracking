@@ -587,13 +587,12 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
     )
     min_gap = float(getattr(config, "TRACK_MIN_INTERVAL", 3))
 
-    # Camera shutter closed / totally dark → ABSENT (do not keep last "present")
-    if float(np.mean(frame)) < 12.0:
+    # Camera shutter / covered lens (often not pure black) → ABSENT
+    if float(np.mean(frame)) < 40.0:
         try:
             face_id._last_match_at.pop(user.id, None)
         except Exception:
             pass
-        present = False
         if last is not None and (analytics.seconds_ago(last.created_at) or 999) < min_gap:
             last.present = 0
             last.idle = False
@@ -601,7 +600,7 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
             last.app = app_name
             last.window_title = window_title
             last.device = device
-            last.created_at = utc_now()
+            # keep created_at so time between samples still accumulates
         else:
             db.add(
                 Heartbeat(
@@ -624,7 +623,12 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
             "ok": True,
             "present": False,
             "marks": [],
-            "identity": {"required": face_id.has_enrollment(user.id), "matched": False, "score": 0.0, "reason": "shutter_or_dark"},
+            "identity": {
+                "required": face_id.has_enrollment(user.id),
+                "matched": False,
+                "score": 0.0,
+                "reason": "shutter_or_dark",
+            },
             "width": int(frame.shape[1]),
             "height": int(frame.shape[0]),
             "skipped": "dark_frame",
@@ -633,13 +637,14 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
     net, yunet = get_detector()
     present, annotated, _score, marks = detector.annotate(frame, net, yunet)
     identity = {"required": False, "matched": True, "score": 0.0, "reason": "not_enrolled"}
+    matched_box = None
     if face_id.has_enrollment(user.id):
-        matched, score, reason = face_id.verify(user.id, frame, yunet, require_desk_zone=True)
+        matched, score, reason, matched_box = face_id.verify(
+            user.id, frame, yunet, require_desk_zone=True
+        )
         identity = {"required": True, "matched": matched, "score": round(score, 3), "reason": reason}
         present = bool(matched)
-        for m in marks:
-            if m.get("at_desk"):
-                m["label"] = "You" if matched else "Not you"
+        marks = face_id.mark_identity_boxes(marks, matched, matched_box)
         status = "Status: PRESENT (you)" if present else f"Status: ABSENT ({reason})"
         color = (0, 255, 0) if present else (0, 0, 255)
         cv2.putText(annotated, status, (12, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
@@ -660,13 +665,13 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         identity = {**identity, "matched": True, "reason": "hold"}
 
     if last is not None and (analytics.seconds_ago(last.created_at) or 999) < min_gap:
+        # Refresh live fields only — do NOT bump created_at (that broke seated/apps timers)
         last.present = int(bool(present))
         last.idle = False
         last.idle_seconds = 0
         last.app = app_name
         last.window_title = window_title
         last.device = device
-        last.created_at = utc_now()
     else:
         db.add(
             Heartbeat(
@@ -693,6 +698,13 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         "width": int(frame.shape[1]),
         "height": int(frame.shape[0]),
         "app": analytics.pretty_app_name(app_name),
+        "today": {
+            "seated": summary["seated"],
+            "active": summary["active"],
+            "idle": summary["idle"],
+            "apps": summary["apps"],
+            "break_left": summary["break_left"],
+        },
     }
 
 

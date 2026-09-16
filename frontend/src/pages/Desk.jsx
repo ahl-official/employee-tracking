@@ -74,7 +74,7 @@ export default function Desk() {
       ctx.strokeRect(r.x, r.y, r.w, r.h);
       ctx.font = "600 14px Segoe UI, sans-serif";
       ctx.fillStyle = m.at_desk ? "#ef4444" : "#3b82f6";
-      ctx.fillText(m.at_desk ? "At desk" : m.label || "Outside", r.x, Math.max(18, r.y - 6));
+      ctx.fillText(m.at_desk ? (m.label || "You") : m.label || "Other", r.x, Math.max(18, r.y - 6));
     });
     ctx.font = "600 18px Segoe UI, sans-serif";
     ctx.fillStyle = present ? "#22c55e" : "#ef4444";
@@ -272,9 +272,13 @@ export default function Desk() {
           }),
         });
         lastPingAt.current = Date.now();
-        if (data.present !== undefined) lastPresent.current = data.present;
+        if (data.present !== undefined) lastPresent.current = !!data.present;
         if (data.marks) lastMarks.current = data.marks;
+        if (data.skipped === "dark_frame") lastMarks.current = [];
         if (data.width && data.height) lastSize.current = { w: data.width, h: data.height };
+        if (data.today) {
+          setMe((prev) => (prev ? { ...prev, today: { ...prev.today, ...data.today }, present: data.present ? 1 : 0 } : prev));
+        }
       } catch {
         /* keep the live view even if one ping fails */
       }
