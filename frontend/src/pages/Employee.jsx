@@ -87,7 +87,7 @@ export default function Employee() {
           <strong>{today.seated || "—"}</strong>
         </div>
         <div className="kpi">
-          <span>Active</span>
+          <span>Active (apps)</span>
           <strong>{today.active || "—"}</strong>
         </div>
         <div className="kpi">
