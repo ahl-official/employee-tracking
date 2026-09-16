@@ -31,6 +31,11 @@ export default function Desk() {
   const [face, setFace] = useState({ enrolled: false, count: 0, needed: 5 });
   const [faceMsg, setFaceMsg] = useState("");
   const [enrolling, setEnrolling] = useState(false);
+  const [cameras, setCameras] = useState([]);
+  const [cameraId, setCameraId] = useState(() => localStorage.getItem("desktrack_camera_id") || "");
+  const cameraIdRef = useRef(cameraId);
+  cameraIdRef.current = cameraId;
+
 
 
   const showCam = useCallback((on) => {
@@ -390,7 +395,20 @@ export default function Desk() {
       </div>
       <div className="desk-grid">
         <section className="monitor-card card">
-          <h2>Live monitoring</h2>
+          <div className="monitor-head">
+            <h2>Live monitoring</h2>
+            <label className="cam-pick">
+              Camera
+              <select value={cameraId} onChange={onCameraChange} disabled={!cameras.length && !camOn}>
+                {!cameras.length ? <option value="">Allow camera to list devices…</option> : null}
+                {cameras.map((c, i) => (
+                  <option key={c.deviceId} value={c.deviceId}>
+                    {c.label || `Camera ${i + 1}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <div className="video-wrap" ref={wrapRef} title="Click for fullscreen" onClick={toggleFullscreen}>
             <video ref={videoRef} className={camOn ? "on" : ""} autoPlay playsInline muted />
             <canvas ref={overlayRef} />

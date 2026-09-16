@@ -427,6 +427,29 @@ code { background: var(--line); padding: 0.05rem 0.3rem; border-radius: 4px; }
   padding: 0.7rem 0.8rem;
 }
 .desk-page .monitor-card h2 { margin-bottom: 0.4rem; }
+.monitor-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.monitor-head h2 { margin: 0; }
+.cam-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #5c5348;
+}
+.cam-pick select {
+  max-width: 220px;
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid #d5cfc4;
+  background: #fff;
+}
 .desk-page .video-wrap {
   flex: 1;
   min-height: 0;
