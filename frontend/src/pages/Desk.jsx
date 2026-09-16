@@ -86,45 +86,99 @@ export default function Desk() {
     ctx.fillText(present ? "Status: PRESENT" : "Status: ABSENT", 16, 32);
   }, []);
 
-  const startCamera = useCallback(async () => {
-    if (streamRef.current) return true;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      const insecure = typeof window !== "undefined" && !window.isSecureContext;
-      setEmptyMsg(
-        insecure
-          ? "Camera needs HTTPS (or localhost). Open DeskTrack over https://… — plain http://IP blocks the camera in Chrome."
-          : "This browser cannot use the camera. Try Chrome or Edge."
-      );
-      showCam(false);
-      return false;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 360 } },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      showCam(true);
-      setEmptyMsg("Clock in — Chrome will ask to use your camera. Allow it.");
-      return true;
-    } catch (err) {
-      streamRef.current = null;
-      showCam(false);
-      if (err?.name === "NotAllowedError") {
+  const refreshCameraList = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    const all = await navigator.mediaDevices.enumerateDevices();
+    const cams = all.filter((d) => d.kind === "videoinput" && d.deviceId);
+    setCameras(cams);
+    return cams;
+  }, []);
+
+  const startCamera = useCallback(
+    async (forceDeviceId) => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        const insecure = typeof window !== "undefined" && !window.isSecureContext;
         setEmptyMsg(
-          "Camera was blocked. Click the camera icon in the address bar and allow access, then Clock in again."
+          insecure
+            ? "Camera needs HTTPS (or localhost). Open DeskTrack over https://… — plain http://IP blocks the camera in Chrome."
+            : "This browser cannot use the camera. Try Chrome or Edge."
         );
-        alert("Please Allow camera access for this site, then click Clock in again.");
-      } else {
-        setEmptyMsg("Could not open the camera. Check that nothing else is using it.");
+        showCam(false);
+        return false;
       }
-      return false;
-    }
-  }, [showCam]);
+      // Release current stream so we can switch to any device (built-in / USB / virtual)
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      const wantId = forceDeviceId || cameraIdRef.current || "";
+      const tryOpen = async (constraints) =>
+        navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+
+      try {
+        let stream = null;
+        // No facingMode — that only allows the laptop "user" cam and blocks virtual/USB cams
+        const size = { width: { ideal: 640 }, height: { ideal: 360 } };
+        if (wantId) {
+          try {
+            stream = await tryOpen({ ...size, deviceId: { exact: wantId } });
+          } catch {
+            try {
+              stream = await tryOpen({ ...size, deviceId: { ideal: wantId } });
+            } catch {
+              stream = null;
+            }
+          }
+        }
+        if (!stream) {
+          stream = await tryOpen({ ...size });
+        }
+        streamRef.current = stream;
+        const cams = await refreshCameraList();
+        const activeId = stream.getVideoTracks()[0]?.getSettings?.()?.deviceId || "";
+        if (activeId) {
+          setCameraId(activeId);
+          cameraIdRef.current = activeId;
+          localStorage.setItem("desktrack_camera_id", activeId);
+        } else if (cams[0]?.deviceId && !cameraIdRef.current) {
+          setCameraId(cams[0].deviceId);
+          cameraIdRef.current = cams[0].deviceId;
+          localStorage.setItem("desktrack_camera_id", cams[0].deviceId);
+        }
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        showCam(true);
+        setEmptyMsg("Clock in — Chrome will ask to use your camera. Allow it.");
+        return true;
+      } catch (err) {
+        streamRef.current = null;
+        showCam(false);
+        if (err?.name === "NotAllowedError") {
+          setEmptyMsg(
+            "Camera was blocked. Click the camera icon in the address bar and allow access, then Clock in again."
+          );
+          alert("Please Allow camera access for this site, then click Clock in again.");
+        } else {
+          setEmptyMsg(
+            "Could not open that camera. Start the virtual/USB camera, then choose it in the Camera list."
+          );
+        }
+        return false;
+      }
+    },
+    [showCam, refreshCameraList]
+  );
+
+  async function onCameraChange(e) {
+    const id = e.target.value;
+    setCameraId(id);
+    cameraIdRef.current = id;
+    localStorage.setItem("desktrack_camera_id", id);
+    camTried.current = true;
+    await startCamera(id);
+  }
 
   const refreshFace = useCallback(async () => {
     const { ok, data } = await api("/api/me/face");
