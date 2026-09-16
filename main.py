@@ -587,12 +587,17 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
     )
     min_gap = float(getattr(config, "TRACK_MIN_INTERVAL", 3))
 
-    # Black / empty frame — do not flip to Break
+    # Camera shutter closed / totally dark → ABSENT (do not keep last "present")
     if float(np.mean(frame)) < 12.0:
-        held_present = bool(last and last.present == 1)
+        try:
+            face_id._last_match_at.pop(user.id, None)
+        except Exception:
+            pass
+        present = False
         if last is not None and (analytics.seconds_ago(last.created_at) or 999) < min_gap:
-            last.present = int(held_present)
+            last.present = 0
             last.idle = False
+            last.idle_seconds = 0
             last.app = app_name
             last.window_title = window_title
             last.device = device
@@ -601,7 +606,7 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
             db.add(
                 Heartbeat(
                     user_id=user.id,
-                    present=int(held_present),
+                    present=0,
                     idle=False,
                     idle_seconds=0,
                     app=app_name,
@@ -613,12 +618,13 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         db.flush()
         start, end = analytics.day_range()
         summary = analytics.summarize(db, user.id, start, end)
+        maybe_alert(db, user, False, True, summary["break_left_seconds"])
         db.commit()
         return {
             "ok": True,
-            "present": held_present,
+            "present": False,
             "marks": [],
-            "identity": {"required": False, "matched": held_present, "score": 0.0, "reason": "dark_frame"},
+            "identity": {"required": face_id.has_enrollment(user.id), "matched": False, "score": 0.0, "reason": "shutter_or_dark"},
             "width": int(frame.shape[1]),
             "height": int(frame.shape[0]),
             "skipped": "dark_frame",
@@ -647,7 +653,7 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         last is not None
         and last.present == 1
         and not present
-        and identity.get("reason") in {"no_face", "dark_frame", "hold"}
+        and identity.get("reason") in {"no_face", "hold"}
         and (analytics.seconds_ago(last.created_at) or 999) < float(config.IDENTITY_HOLD_SECONDS)
     ):
         present = True
