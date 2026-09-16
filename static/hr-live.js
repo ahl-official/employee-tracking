@@ -58,7 +58,7 @@ async function refresh() {
   document.getElementById("kpis").innerHTML = `
     <div class="kpi"><span>Present</span><strong>${c.present || 0}</strong></div>
     <div class="kpi"><span>Away</span><strong>${c.away || 0}</strong></div>
-    <div class="kpi"><span>Idle</span><strong>${c.idle || 0}</strong></div>
+    <div class="kpi"><span>Idle (sleep)</span><strong>${c.inactive || 0}</strong></div>
     <div class="kpi"><span>Break</span><strong>${c.break || 0}</strong></div>
     <div class="kpi"><span>Clocked out</span><strong>${c["clocked-out"] || 0}</strong></div>
     <div class="kpi"><span>Offline</span><strong>${c.offline || 0}</strong></div>`;

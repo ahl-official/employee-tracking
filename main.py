@@ -227,7 +227,7 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
         "clocked_in": clocked_in,
         "present": None if beat is None else beat.present,
         "idle": None if beat is None else beat.idle,
-        "idle_seconds": 0 if beat is None else beat.idle_seconds,
+        "idle_seconds": 0 if (beat is None or status in ("away", "break", "offline", "clocked-out")) else beat.idle_seconds,
         "app": None if live_app is None else analytics.pretty_app_name(live_app),
         "window_title": live_title,
         "device": live_device,

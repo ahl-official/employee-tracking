@@ -159,7 +159,7 @@ def detect_people(frame, net) -> tuple[list, list]:
     return [boxes[i] for i in keep], [scores[i] for i in keep]
 
 
-def annotate(frame, net, yunet=None) -> tuple[bool, object, float]:
+def annotate(frame, net, yunet=None) -> tuple[bool, object, float, list]:
     global _hold_until
     height, width = frame.shape[:2]
     zone = desk_zone(width, height)

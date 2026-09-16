@@ -81,11 +81,7 @@ export default function Live() {
           <strong>{c.away || 0}</strong>
         </div>
         <div className="kpi">
-          <span>Idle</span>
-          <strong>{c.idle || 0}</strong>
-        </div>
-        <div className="kpi">
-          <span>Inactive</span>
+          <span>Idle (sleep)</span>
           <strong>{c.inactive || 0}</strong>
         </div>
         <div className="kpi">

@@ -224,8 +224,12 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             gap = (min(now, end) - as_dt(row.created_at)).total_seconds()
             gap = max(gap, float(config.HEARTBEAT_SECONDS))
         if gap > sleep_gap:
-            # PC sleep / offline — Idle (sleep) only; do not credit seated/apps across the nap
-            idle += min(gap, 4 * 3600)
+            # PC sleep / offline - Idle (sleep) only; do not credit seated/apps across the nap
+            raw_app = (row.app or "").strip()
+            if is_lock_screen(raw_app, row.window_title) or row.present == 0:
+                away += min(gap, 4 * 3600)
+            else:
+                idle += min(gap, 4 * 3600)
             credit(row, float(config.HEARTBEAT_SECONDS))
         else:
             credit(row, min(max(gap, 0), cap))
@@ -240,6 +244,10 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
     allowance = config.BREAK_ALLOWANCE_SECONDS
     break_used = min(away, allowance)
     break_left = max(0.0, allowance - away)
+    excess_away = max(0.0, away - allowance)
+    
+    # Any away time beyond the break allowance is counted as idle time rather than being lost
+    idle += excess_away
     return {
         "samples": len(rows),
         "seated": fmt_hours(seated),
