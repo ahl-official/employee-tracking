@@ -106,65 +106,80 @@ export default function Desk() {
         showCam(false);
         return false;
       }
-      // Release current stream so we can switch to any device (built-in / USB / virtual)
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
       }
-      const wantId = forceDeviceId || cameraIdRef.current || "";
-      const tryOpen = async (constraints) =>
-        navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+      if (videoRef.current) videoRef.current.srcObject = null;
 
-      try {
-        let stream = null;
-        // No facingMode — that only allows the laptop "user" cam and blocks virtual/USB cams
-        const size = { width: { ideal: 640 }, height: { ideal: 360 } };
-        if (wantId) {
-          try {
-            stream = await tryOpen({ ...size, deviceId: { exact: wantId } });
-          } catch {
-            try {
-              stream = await tryOpen({ ...size, deviceId: { ideal: wantId } });
-            } catch {
-              stream = null;
-            }
-          }
+      const wantId = forceDeviceId || cameraIdRef.current || "";
+      const tryOpen = (video) => navigator.mediaDevices.getUserMedia({ video, audio: false });
+
+      // Virtual cams (OBS etc.) often reject width/height — try bare deviceId first
+      const attempts = [];
+      if (wantId) {
+        attempts.push({ deviceId: { exact: wantId } });
+        attempts.push({ deviceId: { exact: wantId }, width: { ideal: 640 }, height: { ideal: 360 } });
+        attempts.push({ deviceId: { ideal: wantId } });
+      }
+      attempts.push(true); // any camera
+      attempts.push({ width: { ideal: 640 }, height: { ideal: 360 } });
+
+      let stream = null;
+      let lastErr = null;
+      for (const video of attempts) {
+        try {
+          stream = await tryOpen(video);
+          break;
+        } catch (err) {
+          lastErr = err;
+          stream = null;
         }
-        if (!stream) {
-          stream = await tryOpen({ ...size });
-        }
-        streamRef.current = stream;
-        const cams = await refreshCameraList();
-        const activeId = stream.getVideoTracks()[0]?.getSettings?.()?.deviceId || "";
-        if (activeId) {
-          setCameraId(activeId);
-          cameraIdRef.current = activeId;
-          localStorage.setItem("desktrack_camera_id", activeId);
-        } else if (cams[0]?.deviceId && !cameraIdRef.current) {
-          setCameraId(cams[0].deviceId);
-          cameraIdRef.current = cams[0].deviceId;
-          localStorage.setItem("desktrack_camera_id", cams[0].deviceId);
-        }
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        showCam(true);
-        setEmptyMsg("Clock in — Chrome will ask to use your camera. Allow it.");
-        return true;
-      } catch (err) {
-        streamRef.current = null;
+      }
+
+      if (!stream) {
         showCam(false);
-        if (err?.name === "NotAllowedError") {
+        if (lastErr?.name === "NotAllowedError") {
           setEmptyMsg(
             "Camera was blocked. Click the camera icon in the address bar and allow access, then Clock in again."
           );
           alert("Please Allow camera access for this site, then click Clock in again.");
         } else {
           setEmptyMsg(
-            "Could not open that camera. Start the virtual/USB camera, then choose it in the Camera list."
+            "Could not open that camera. In OBS click Start Virtual Camera, close other apps using it, then Refresh list and try again."
           );
         }
+        return false;
+      }
+
+      try {
+        streamRef.current = stream;
+        const cams = await refreshCameraList();
+        const activeId = stream.getVideoTracks()[0]?.getSettings?.()?.deviceId || "";
+        const activeLabel = cams.find((c) => c.deviceId === activeId)?.label || "";
+        if (activeId) {
+          setCameraId(activeId);
+          cameraIdRef.current = activeId;
+          localStorage.setItem("desktrack_camera_id", activeId);
+        }
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        showCam(true);
+        if (wantId && activeId && wantId !== activeId) {
+          setEmptyMsg(
+            `Could not open the selected camera — using ${activeLabel || "another camera"} instead. Start OBS Virtual Camera, then pick it again.`
+          );
+        } else {
+          setEmptyMsg("Camera is on.");
+        }
+        return true;
+      } catch (err) {
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        showCam(false);
+        setEmptyMsg("Camera opened but could not play. Try Refresh list or another camera.");
         return false;
       }
     },
@@ -482,9 +497,9 @@ export default function Desk() {
             </div>
           </div>
           <p className="hint cam-hint">
-            If your virtual camera is missing from Chrome’s Allow popup, DeskTrack cannot see it either. Start the
-            virtual cam first (e.g. OBS → Start Virtual Camera), enable Windows Camera access for desktop apps, fully
-            quit Chrome, reopen this page, then Allow and pick it here.
+            If OBS is listed but won’t open: in OBS click <strong>Start Virtual Camera</strong>, close Zoom/Teams/Camera
+            app if open, then click <em>Refresh list</em> and select OBS again. Virtual cams often fail if resolution is
+            forced — DeskTrack now opens them without that.
           </p>
           <div className="video-wrap" ref={wrapRef} title="Click for fullscreen" onClick={toggleFullscreen}>
             <video ref={videoRef} className={camOn ? "on" : ""} autoPlay playsInline muted />
