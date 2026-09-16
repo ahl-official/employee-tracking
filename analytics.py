@@ -82,6 +82,19 @@ def app_key(app: str | None) -> str:
     return name.strip().lower() or "unknown"
 
 
+def is_lock_screen(app: str | None, title: str | None = None) -> bool:
+    """Win+L / Windows lock screen — counts as away (break), not seated."""
+    key = app_key(app)
+    title_l = (title or "").lower()
+    if key in {"lockapp", "logonui", "lock screen", "windows lock", "lockapp.exe"}:
+        return True
+    if "lock" in key and "screen" in key:
+        return True
+    if "windows lock" in title_l or title_l.strip() in {"lock screen", "locked"}:
+        return True
+    return False
+
+
 def pretty_app_name(app: str | None) -> str:
     """Human label for Apps today / live board (Chrome, not chrome.exe)."""
     key = app_key(app)
@@ -189,7 +202,12 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             return
         raw_app = (row.app or "").strip() or "unknown"
         key = app_key(raw_app)
-        # App time while PC is awake and employee is at desk (present)
+        locked = is_lock_screen(raw_app, row.window_title)
+        # Win+L / lock screen = away (uses break allowance), never seated/active
+        if locked or row.present == 0:
+            away += delta
+            apps[key] = apps.get(key, 0) + delta
+            return
         if row.present == 1:
             seated += delta
             active += delta
@@ -198,8 +216,6 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
                 work += delta
             else:
                 other += delta
-        elif row.present == 0:
-            away += delta
 
     for i, row in enumerate(rows):
         if i + 1 < len(rows):

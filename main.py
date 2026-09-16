@@ -556,6 +556,7 @@ def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depen
         return JSONResponse({"ok": False, "error": "clocked out"}, status_code=400)
     app_name = str(payload.get("app") or "Unknown")[:80]
     window_title = str(payload.get("window_title") or "")[:180]
+    locked = analytics.is_lock_screen(app_name, window_title)
     save_agent_foreground(user.id, app_name, window_title)
     last = (
         db.query(Heartbeat)
@@ -563,13 +564,41 @@ def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depen
         .order_by(Heartbeat.id.desc())
         .first()
     )
-    # Stamp the latest presence sample so Apps today accumulates under the real app
+    min_gap = float(getattr(config, "TRACK_MIN_INTERVAL", 3))
+    # Win+L: force away heartbeats so break allowance is consumed even if Chrome is frozen
+    if locked:
+        try:
+            face_id._last_match_at.pop(user.id, None)
+        except Exception:
+            pass
+        if last is not None and (analytics.seconds_ago(last.created_at) or 999) < min_gap:
+            last.present = 0
+            last.app = app_name
+            last.window_title = window_title or "Lock screen"
+            last.device = "laptop"
+            last.idle = False
+        else:
+            db.add(
+                Heartbeat(
+                    user_id=user.id,
+                    present=0,
+                    idle=False,
+                    idle_seconds=0,
+                    app=app_name,
+                    window_title=window_title or "Lock screen",
+                    device="laptop",
+                    created_at=utc_now(),
+                )
+            )
+        db.commit()
+        return {"ok": True, "app": "Lock screen", "locked": True}
+
     if last is not None and (analytics.seconds_ago(last.created_at) or 999) < 90:
         last.app = app_name
         last.window_title = window_title
         last.device = "laptop"
         db.commit()
-    return {"ok": True, "app": analytics.pretty_app_name(app_name)}
+    return {"ok": True, "app": analytics.pretty_app_name(app_name), "locked": False}
 
 
 def _resolve_app_fields(user_id: int, payload: dict) -> tuple[str, str, str]:
@@ -689,6 +718,14 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
     ):
         present = True
         identity = {**identity, "matched": True, "reason": "hold"}
+
+    # Win+L reported by agent overrides face hold — you are away on break
+    if analytics.is_lock_screen(app_name, window_title):
+        present = False
+        try:
+            face_id._last_match_at.pop(user.id, None)
+        except Exception:
+            pass
 
     if last is not None and (analytics.seconds_ago(last.created_at) or 999) < min_gap:
         # Refresh live fields only — do NOT bump created_at (that broke seated/apps timers)
