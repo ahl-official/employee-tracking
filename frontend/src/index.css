@@ -443,12 +443,20 @@ code { background: var(--line); padding: 0.05rem 0.3rem; border-radius: 4px; }
   font-size: 0.85rem;
   color: #5c5348;
 }
-.cam-pick select {
-  max-width: 220px;
-  padding: 0.25rem 0.4rem;
-  border-radius: 6px;
-  border: 1px solid #d5cfc4;
-  background: #fff;
+.cam-pick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+.cam-refresh {
+  font-size: 0.82rem;
+  padding: 0.25rem 0.55rem;
+}
+.cam-hint {
+  margin: 0 0 0.55rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 .desk-page .video-wrap {
   flex: 1;

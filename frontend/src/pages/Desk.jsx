@@ -180,6 +180,19 @@ export default function Desk() {
     await startCamera(id);
   }
 
+  async function refreshCamerasClick() {
+    // Re-list after user starts OBS/virtual cam — Chrome only sees devices that exist at allow-time
+    const cams = await refreshCameraList();
+    if (!cams.length) {
+      await startCamera();
+      return;
+    }
+    setFaceMsg("");
+    if (cameraIdRef.current && cams.some((c) => c.deviceId === cameraIdRef.current)) {
+      await startCamera(cameraIdRef.current);
+    }
+  }
+
   const refreshFace = useCallback(async () => {
     const { ok, data } = await api("/api/me/face");
     if (ok) setFace(data);
@@ -451,18 +464,28 @@ export default function Desk() {
         <section className="monitor-card card">
           <div className="monitor-head">
             <h2>Live monitoring</h2>
-            <label className="cam-pick">
-              Camera
-              <select value={cameraId} onChange={onCameraChange} disabled={!cameras.length && !camOn}>
-                {!cameras.length ? <option value="">Allow camera to list devices…</option> : null}
-                {cameras.map((c, i) => (
-                  <option key={c.deviceId} value={c.deviceId}>
-                    {c.label || `Camera ${i + 1}`}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="cam-pick-row">
+              <label className="cam-pick">
+                Camera
+                <select value={cameraId} onChange={onCameraChange} disabled={!cameras.length && !camOn}>
+                  {!cameras.length ? <option value="">Allow camera to list devices…</option> : null}
+                  {cameras.map((c, i) => (
+                    <option key={c.deviceId} value={c.deviceId}>
+                      {c.label || `Camera ${i + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" className="ghost cam-refresh" onClick={refreshCamerasClick}>
+                Refresh list
+              </button>
+            </div>
           </div>
+          <p className="hint cam-hint">
+            If your virtual camera is missing from Chrome’s Allow popup, DeskTrack cannot see it either. Start the
+            virtual cam first (e.g. OBS → Start Virtual Camera), enable Windows Camera access for desktop apps, fully
+            quit Chrome, reopen this page, then Allow and pick it here.
+          </p>
           <div className="video-wrap" ref={wrapRef} title="Click for fullscreen" onClick={toggleFullscreen}>
             <video ref={videoRef} className={camOn ? "on" : ""} autoPlay playsInline muted />
             <canvas ref={overlayRef} />
