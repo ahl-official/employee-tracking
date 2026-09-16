@@ -235,9 +235,24 @@ def main() -> None:
         else:
             log("Could not clock in — check the website.")
 
-    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW if sys.platform == "win32" else 0)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(camera_index)
+    cap = None
+    for idx in (camera_index, 0, 1, 2):
+        trial = cv2.VideoCapture(idx, cv2.CAP_DSHOW if sys.platform == "win32" else 0)
+        if not trial.isOpened():
+            trial = cv2.VideoCapture(idx)
+        if not trial.isOpened():
+            continue
+        ok, test = trial.read()
+        if ok and test is not None and float(test.mean()) >= 12.0:
+            cap = trial
+            camera_index = idx
+            log(f"Using camera index {idx}")
+            break
+        trial.release()
+    if cap is None:
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW if sys.platform == "win32" else 0)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
         log(f"Cannot open camera index {camera_index}")
         sys.exit(1)
@@ -268,10 +283,12 @@ def main() -> None:
             if not ok_enc:
                 time.sleep(interval)
                 continue
-            # Skip near-black frames (camera held by browser / lid closed)
-            if float(frame.mean()) < 12.0:
-                time.sleep(interval)
-                continue
+            mean = float(frame.mean())
+            if mean < 12.0:
+                # Still upload so server can record apps + hold last present (browser often holds cam)
+                if last_status != "dark_frame":
+                    log("Camera frame is dark (browser may be using the webcam). Still sending apps.")
+                    last_status = "dark_frame"
             image_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
 
             try:
