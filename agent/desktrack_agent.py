@@ -207,6 +207,39 @@ def ensure_clocked_in(session: requests.Session, base: str) -> bool:
     return res.status_code == 200 and res.json().get("clocked_in", True)
 
 
+def open_camera(preferred_index: int = 0):
+    """Open the first camera that returns a non-black frame. Prefer MSMF on Windows (less exclusive)."""
+    backends = []
+    if sys.platform == "win32":
+        backends = [cv2.CAP_MSMF, cv2.CAP_DSHOW, 0]
+    else:
+        backends = [0]
+    indices = []
+    for i in (preferred_index, 0, 1, 2):
+        if i not in indices:
+            indices.append(i)
+    for backend in backends:
+        for idx in indices:
+            try:
+                cap = cv2.VideoCapture(idx, backend) if backend else cv2.VideoCapture(idx)
+            except Exception:
+                continue
+            if not cap.isOpened():
+                cap.release()
+                continue
+            # Warm up a few frames
+            ok, frame = False, None
+            for _ in range(5):
+                ok, frame = cap.read()
+                if ok and frame is not None and float(frame.mean()) >= 12.0:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+                    log(f"Using camera index {idx} backend={backend}")
+                    return cap, idx
+            cap.release()
+    return None, preferred_index
+
+
 def main() -> None:
     cfg = load_config()
     base = cfg.get("server", "url", fallback="http://127.0.0.1:8000").rstrip("/")
@@ -235,34 +268,17 @@ def main() -> None:
         else:
             log("Could not clock in — check the website.")
 
-    cap = None
-    for idx in (camera_index, 0, 1, 2):
-        trial = cv2.VideoCapture(idx, cv2.CAP_DSHOW if sys.platform == "win32" else 0)
-        if not trial.isOpened():
-            trial = cv2.VideoCapture(idx)
-        if not trial.isOpened():
-            continue
-        ok, test = trial.read()
-        if ok and test is not None and float(test.mean()) >= 12.0:
-            cap = trial
-            camera_index = idx
-            log(f"Using camera index {idx}")
-            break
-        trial.release()
+    cap, camera_index = open_camera(camera_index)
     if cap is None:
-        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW if sys.platform == "win32" else 0)
-        if not cap.isOpened():
-            cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        log(f"Cannot open camera index {camera_index}")
+        log("Cannot open a working camera. Close Chrome/Edge camera on DeskTrack, then restart the agent.")
         sys.exit(1)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
 
     prevent_sleep(True)
     log("Tracking started (silent). Sleep blocked while running.")
+    log("Tip: keep My desk open for status, but do not Allow camera in Chrome while the agent runs.")
 
     last_status = ""
+    dark_streak = 0
     try:
         while True:
             try:
@@ -275,20 +291,45 @@ def main() -> None:
             ok, frame = cap.read()
             if not ok or frame is None:
                 time.sleep(1)
+                dark_streak += 1
+                if dark_streak >= 10:
+                    log("Re-opening camera…")
+                    cap.release()
+                    cap, camera_index = open_camera(camera_index)
+                    dark_streak = 0
+                    if cap is None:
+                        log("Camera lost. Waiting…")
+                        time.sleep(5)
+                        cap, camera_index = open_camera(camera_index)
                 continue
 
             idle_seconds = idle_seconds_windows()
             app_name, win_title = foreground_window()
+            mean = float(frame.mean())
+            if mean < 12.0:
+                dark_streak += 1
+                if dark_streak == 1 or dark_streak % 15 == 0:
+                    log(
+                        "Camera frame is dark — close the website camera (Clock out or deny cam in Chrome), "
+                        "then wait a few seconds."
+                    )
+                if dark_streak >= 20:
+                    log("Re-opening camera after dark frames…")
+                    cap.release()
+                    time.sleep(1)
+                    cap, camera_index = open_camera(camera_index)
+                    dark_streak = 0
+                    if cap is None:
+                        time.sleep(3)
+                        continue
+                # Still send apps so Apps today stays alive; server holds last present
+            else:
+                dark_streak = 0
+
             ok_enc, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 55])
             if not ok_enc:
                 time.sleep(interval)
                 continue
-            mean = float(frame.mean())
-            if mean < 12.0:
-                # Still upload so server can record apps + hold last present (browser often holds cam)
-                if last_status != "dark_frame":
-                    log("Camera frame is dark (browser may be using the webcam). Still sending apps.")
-                    last_status = "dark_frame"
             image_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
 
             try:
@@ -324,6 +365,8 @@ def main() -> None:
                 msg = f"present={present} app={app_name}"
                 if identity.get("required"):
                     msg += f" identity={identity.get('reason')} score={identity.get('score')}"
+                if mean < 12.0:
+                    msg += " (dark_frame)"
                 if msg != last_status:
                     log(msg)
                     last_status = msg
@@ -336,7 +379,8 @@ def main() -> None:
         log("Stopping…")
     finally:
         prevent_sleep(False)
-        cap.release()
+        if cap is not None:
+            cap.release()
         log("Agent stopped. Sleep allowed again.")
 
 

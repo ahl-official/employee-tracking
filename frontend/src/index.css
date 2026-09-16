@@ -522,4 +522,12 @@ button.linkish {
 #root.has-nav { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
 #root.desk-page { height: 100vh; overflow: hidden; }
 .video-wrap video.on { display: block; }
+.video-wrap img.agent-preview {
+  display: none;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #111;
+}
+.video-wrap img.agent-preview.on { display: block; }
 .person-feed.on { display: block; }

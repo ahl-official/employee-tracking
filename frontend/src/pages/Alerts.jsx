@@ -26,9 +26,8 @@ export default function Alerts() {
         <div>
           <h1>HR pings</h1>
           <p className="muted">
-            Away-after-break alerts, and face-mismatch pings when someone else sits at an enrolled desk.
-            Set <code>HR_ALERT_WEBHOOK</code> on the server (Slack/Teams/Discord) so HR is notified even when
-            not on this page.
+            Created after the 30-minute break allowance is used, if someone stays away during work hours and is still
+            clocked in. Face-mismatch alerts also appear here when someone else is at an enrolled desk.
           </p>
         </div>
       </header>

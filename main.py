@@ -224,7 +224,7 @@ def maybe_alert(db: Session, user: User, present, clocked_in: bool, break_left: 
     minutes = max(1, int(away_seconds // 60))
     message = f"{user.name} has been away from the desk for {minutes} min."
     db.add(Alert(user_id=user.id, message=message, created_at=utc_now(), seen=False))
-    notify_hr_external(message)
+    notify_hr_external_async(message)
 
 
 def maybe_identity_alert(db: Session, user: User, identity: dict):
@@ -262,33 +262,45 @@ def maybe_identity_alert(db: Session, user: User, identity: dict):
         f"(face mismatch, score={score})."
     )
     db.add(Alert(user_id=user.id, message=message, created_at=utc_now(), seen=False))
-    notify_hr_external(message)
+    notify_hr_external_async(message)
 
 
-def notify_hr_external(message: str) -> None:
-    """Best-effort push when HR is not watching the website."""
-    import threading
-
+def notify_hr_external(message: str) -> dict:
+    """Best-effort push when HR is not watching the website. Returns {ok, detail}."""
     webhook = getattr(config, "HR_ALERT_WEBHOOK", "") or ""
     if not webhook:
-        return
+        return {"ok": False, "detail": "HR_ALERT_WEBHOOK is not set on the server."}
 
-    def _post():
-        try:
-            import urllib.request
+    text = f"DeskTrack: {message}"
+    # Slack Incoming Webhooks use "text"; Discord uses "content"
+    if "discord.com/api/webhooks" in webhook or "discordapp.com/api/webhooks" in webhook:
+        payload = {"content": text}
+    else:
+        payload = {"text": text}
 
-            body = json.dumps({"text": f"DeskTrack: {message}"}).encode("utf-8")
-            req = urllib.request.Request(
-                webhook,
-                data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=8)
-        except Exception:
-            pass
+    try:
+        import urllib.error
+        import urllib.request
 
-    threading.Thread(target=_post, daemon=True).start()
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            webhook,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as res:
+            return {"ok": True, "detail": f"Webhook HTTP {res.status}"}
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "detail": f"Webhook HTTP {exc.code}: {exc.reason}"}
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc)}
+
+
+def notify_hr_external_async(message: str) -> None:
+    import threading
+
+    threading.Thread(target=lambda: notify_hr_external(message), daemon=True).start()
 
 
 @app.get("/health")
