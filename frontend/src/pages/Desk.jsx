@@ -471,7 +471,7 @@ export default function Desk() {
           <strong>{today.break_left || "30m"}</strong>
         </div>
         <div className="kpi">
-          <span>Sleep today</span>
+          <span>Idle (sleep)</span>
           <strong>{today.idle || "—"}</strong>
         </div>
       </div>
@@ -541,7 +541,7 @@ export default function Desk() {
               </div>
               <div className="now-row">
                 <span>PC</span>
-                <b>{p?.status === "inactive" ? "sleep/offline" : "awake"}</b>
+                <b>{p?.status === "inactive" ? "idle (sleep)" : "awake"}</b>
               </div>
             </div>
             <p className="now-title" title={p?.window_title || ""}>
