@@ -175,10 +175,14 @@ export default function Desk() {
           needed: data.needed ?? 0,
         });
         setFaceMsg(data.message || "Saved.");
-        if (data.ready) break;
+        if (data.ready) {
+          window.dispatchEvent(new Event("desktrack-face"));
+          break;
+        }
         await new Promise((r) => setTimeout(r, 350));
       }
       await refreshFace();
+      window.dispatchEvent(new Event("desktrack-face"));
     } finally {
       setEnrolling(false);
     }
@@ -189,6 +193,7 @@ export default function Desk() {
     await api("/api/me/face", { method: "DELETE", body: "{}" });
     setFaceMsg("Face enrollment cleared.");
     refreshFace();
+    window.dispatchEvent(new Event("desktrack-face"));
   }
 
   async function toggleClock() {
@@ -330,34 +335,35 @@ export default function Desk() {
       </header>
       <div className={calloutOk ? "callout ok" : "callout"}>{callout}</div>
       {!face.enrolled ? (
-        <div className="callout face-needed">
-          <strong>Face enrollment required.</strong> Click <em>Enroll face</em> below, allow the camera,
-          and look at the screen until it says enrolled. Only your face will count as present.
+        <>
+          <div className="callout face-needed">
+            <strong>Face enrollment required.</strong> Click <em>Enroll face</em> below, allow the camera,
+            and look at the screen until it says enrolled. Only your face will count as present.
+          </div>
+          <div className="card face-card">
+            <h2>Your face (identity)</h2>
+            <p className="hint">
+              Enroll once so only <strong>you</strong> count as present. Someone else at your desk will not count.
+            </p>
+            <p className="face-status">
+              Not enrolled yet — need about {face.needed || 5} face samples.
+            </p>
+            {faceMsg ? <p className="hint">{faceMsg}</p> : null}
+            <div className="actions">
+              <button type="button" onClick={enrollFaceOnce} disabled={enrolling}>
+                {enrolling ? "Enrolling…" : "Enroll face"}
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="callout ok face-done">
+          Face enrolled — identity check is on.
+          <button type="button" className="linkish" onClick={clearFace}>
+            Clear &amp; re-enroll
+          </button>
         </div>
-      ) : null}
-      <div className="card face-card">
-        <h2>Your face (identity)</h2>
-        <p className="hint">
-          Enroll once so only <strong>you</strong> count as present. Someone else at your desk will not count.
-        </p>
-        <p className="face-status">
-          {face.enrolled
-            ? `Enrolled (${face.count} samples) — identity check is on.`
-            : `Not enrolled yet — need about ${face.needed || 5} face samples.`}
-        </p>
-        {faceMsg ? <p className="hint">{faceMsg}</p> : null}
-        <div className="actions">
-          {!face.enrolled ? (
-            <button type="button" onClick={enrollFaceOnce} disabled={enrolling}>
-              {enrolling ? "Enrolling…" : "Enroll face"}
-            </button>
-          ) : (
-            <button type="button" className="ghost" onClick={clearFace}>
-              Clear face
-            </button>
-          )}
-        </div>
-      </div>
+      )}
       <div className="kpis">
         <div className="kpi">
           <span>Status</span>
@@ -436,7 +442,8 @@ export default function Desk() {
           <article className="card apps-card">
             <h2>Apps today</h2>
             <p className="hint apps-hint">
-              Browser used for DeskTrack (Chrome, Edge, Firefox…). Other desktop apps cannot be seen from a web page.
+              With the DeskTrack Agent running, desktop apps are listed here. Browser-only tracking shows the
+              browser name (Chrome, Edge…).
             </p>
             <ul className="apps">
               {(today.apps || []).length ? (

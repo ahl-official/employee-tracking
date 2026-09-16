@@ -1,46 +1,26 @@
 # DeskTrack Windows Agent
 
-Background webcam tracker. Presence counts only when **your enrolled face** is at the desk.
+Background webcam + desktop-app tracker. Presence counts only when **your enrolled face** is at the desk.
 
-## Why “Enroll face” is missing on the website
+## Employee setup (once)
 
-The VPS must be updated first:
+1. Install [Python 3](https://www.python.org/downloads/) — tick **Add to PATH**.
+2. Run `Install-DeskTrack-Agent.bat` (share this one file from HR).
+3. Enter username / password (server URL default is fine).
+4. Installer downloads the agent, starts it **hidden** (no terminal), and adds a **Windows Startup** shortcut.
 
-```bash
-cd /opt/desktrack
-git pull
-docker compose up -d --build
-```
+You do **not** run the installer every day. After Windows login, tracking starts by itself.
 
-Then hard-refresh the site (`Ctrl+F5`). On **My desk** you should see **Your face (identity)** and an **Enroll face** button. It is not a separate browser popup — click the button.
+Then once on the website: log in → **Enroll face** → done. The agent auto clock-ins and reports apps + presence.
 
-## Employee setup (no Git / no full project needed)
+## Why seated / active looked wrong
 
-### Option A — one installer (easiest)
+Seated = time your face is present. Active = seated and moving the mouse/keyboard. Idle = seated but inactive. **Active + Idle = Seated.**
 
-1. HR downloads this file from the repo and shares it (email / shared drive):  
-   `agent/Install-DeskTrack-Agent.bat`
-2. Employee needs **Python 3** installed ([python.org](https://www.python.org/downloads/) — tick *Add to PATH*).
-3. Employee double-clicks **Install-DeskTrack-Agent.bat**.
-4. Enter server URL (default is fine) + username + password.
-5. Installer downloads the agent, installs packages, creates a Desktop shortcut.
+## Apps today
 
-Then:
+The website alone can only see the browser name. With the agent running, **Apps today** lists real desktop apps (Chrome, VS Code, Slack, etc.).
 
-1. Open https://desktrack.hairscalptradingco.com → log in → **Enroll face**
-2. Start **DeskTrack Agent** from the Desktop and leave it open while working
+## Face enrollment
 
-### Option B — zip folder
-
-1. HR zips the `agent` folder from the project (or from GitHub → Code → Download ZIP → take the `agent` folder).
-2. Copy zip to the employee PC, unzip.
-3. Run `Install-DeskTrack-Agent.bat` **or** copy `config.example.ini` → `config.ini`, edit login, then `pip install -r requirements.txt` and `Start DeskTrack Agent.bat`.
-
-Employees do **not** need the full codebase, Docker, or VPS access.
-
-## What the agent does
-
-- Uses the PC webcam
-- Blocks Windows sleep while running
-- Queues frames if Wi‑Fi drops, uploads later
-- Server checks identity against enrolled face
+Enroll once on **My desk**. After that the big enroll box is replaced by a short “Face enrolled” message, and your photo appears in the left sidebar.

@@ -24,6 +24,10 @@ def model_path(user_id: int) -> Path:
     return FACE_DIR / f"user_{user_id}.npz"
 
 
+def thumb_path(user_id: int) -> Path:
+    return FACE_DIR / f"user_{user_id}_thumb.jpg"
+
+
 def has_enrollment(user_id: int) -> bool:
     path = model_path(user_id)
     if not path.is_file():
@@ -49,13 +53,25 @@ def clear_enrollment(user_id: int) -> None:
     path = model_path(user_id)
     if path.is_file():
         path.unlink()
+    thumb = thumb_path(user_id)
+    if thumb.is_file():
+        thumb.unlink()
 
 
-def _crop_faces(frame, yunet) -> list[np.ndarray]:
+def read_thumbnail(user_id: int) -> bytes | None:
+    path = thumb_path(user_id)
+    if not path.is_file():
+        return None
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _face_boxes(frame, yunet) -> list[tuple[int, int, int, int]]:
     boxes = detector.detect_faces(yunet, frame)
     height, width = frame.shape[:2]
-    crops = []
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    out = []
     for x, y, w, h in boxes:
         pad = int(0.15 * max(w, h))
         x1 = max(0, x - pad)
@@ -64,6 +80,25 @@ def _crop_faces(frame, yunet) -> list[np.ndarray]:
         y2 = min(height, y + h + pad)
         if x2 - x1 < 40 or y2 - y1 < 40:
             continue
+        out.append((x1, y1, x2, y2))
+    return out
+
+
+def _save_thumbnail(user_id: int, frame, box: tuple[int, int, int, int]) -> None:
+    x1, y1, x2, y2 = box
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return
+    thumb = cv2.resize(crop, (96, 96))
+    _ensure_dir()
+    cv2.imwrite(str(thumb_path(user_id)), thumb, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+
+
+def _crop_faces(frame, yunet) -> list[np.ndarray]:
+    boxes = _face_boxes(frame, yunet)
+    crops = []
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    for x1, y1, x2, y2 in boxes:
         face = gray[y1:y2, x1:x2]
         face = cv2.resize(face, SIZE)
         face = cv2.equalizeHist(face)
@@ -105,6 +140,10 @@ def enroll_from_frame(user_id: int, frame, yunet) -> dict:
     if added == 0 and len(embeds) >= MAX_ENROLL_SAMPLES:
         return {"ok": True, "count": len(embeds), "ready": True, "message": "Enrollment already complete."}
 
+    boxes = _face_boxes(frame, yunet)
+    if boxes:
+        _save_thumbnail(user_id, frame, boxes[0])
+
     arr = np.stack(embeds, axis=0)
     np.savez_compressed(path, embeds=arr, count=np.array(len(embeds)))
     count = len(embeds)
@@ -116,6 +155,7 @@ def enroll_from_frame(user_id: int, frame, yunet) -> dict:
         "ready": ready,
         "needed": max(0, MIN_ENROLL_SAMPLES - count),
         "message": "Face enrolled." if ready else f"Need {max(0, MIN_ENROLL_SAMPLES - count)} more samples.",
+        "has_photo": thumb_path(user_id).is_file(),
     }
 
 

@@ -11,6 +11,8 @@ set "INSTALL_DIR=%LOCALAPPDATA%\DeskTrackAgent"
 set "ZIP=%TEMP%\desktrack-agent.zip"
 set "SRC=%TEMP%\desktrack-src"
 set "REPO_ZIP=https://github.com/ahl-official/employee-tracking/archive/refs/heads/main.zip"
+set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
+set "VBS=%INSTALL_DIR%\Start-Hidden.vbs"
 
 where python >nul 2>&1
 if errorlevel 1 (
@@ -77,17 +79,39 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo.
+REM Prefer pythonw so no console stays open
+set "PYW="
+for /f "delims=" %%I in ('where pythonw 2^>nul') do (
+  if not defined PYW set "PYW=%%I"
+)
+if not defined PYW set "PYW=pythonw"
+where pythonw >nul 2>&1
+if errorlevel 1 set "PYW=python"
+
+echo Creating silent starter...
+(
+  echo Set sh = CreateObject^("WScript.Shell"^)
+  echo sh.CurrentDirectory = "%INSTALL_DIR%"
+  echo sh.Run """%PYW%"" ""%INSTALL_DIR%\desktrack_agent.py""", 0, False
+) > "%VBS%"
+
 echo Creating desktop shortcut...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'DeskTrack Agent.lnk')); $s.TargetPath = 'python'; $s.Arguments = '\"%INSTALL_DIR%\desktrack_agent.py\"'; $s.WorkingDirectory = '%INSTALL_DIR%'; $s.Save()"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'DeskTrack Agent.lnk')); $s.TargetPath = '%VBS%'; $s.WorkingDirectory = '%INSTALL_DIR%'; $s.WindowStyle = 7; $s.Save()"
+
+echo Adding Windows Startup entry (runs every login, no daily click)...
+if not exist "%STARTUP%" mkdir "%STARTUP%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%STARTUP%\DeskTrack Agent.lnk'); $s.TargetPath = '%VBS%'; $s.WorkingDirectory = '%INSTALL_DIR%'; $s.WindowStyle = 7; $s.Save()"
 
 echo.
-echo Done.
-echo  1. Open https://desktrack.hairscalptradingco.com in Chrome
-echo  2. Log in - My desk - click Enroll face (allow camera)
-echo  3. Then start DeskTrack Agent from your Desktop
+echo Starting agent in the background (no terminal window)...
+wscript //nologo "%VBS%"
+
+echo.
+echo Done. Install finished — this window can close.
+echo  - Agent is running hidden now
+echo  - It will start again when you sign in to Windows
+echo  - Enroll your face once on the website: My desk
+echo  - You do NOT need to run this installer every day
 echo.
 pause
-
-cd /d "%INSTALL_DIR%"
-python desktrack_agent.py
+exit /b 0

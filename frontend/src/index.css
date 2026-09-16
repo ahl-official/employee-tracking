@@ -27,6 +27,14 @@ body { margin: 0; background: var(--bg); color: var(--ink); }
 .nav a { color: #d8d0c4; text-decoration: none; padding: 0.45rem 0.6rem; border-radius: 8px; }
 .nav a:hover, .nav a.active { background: #2a241d; color: white; }
 .nav-foot { margin-top: auto; display: grid; gap: 0.4rem; color: #b6aea2; font-size: 0.9rem; }
+.nav-face {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid #3a332b;
+  margin-bottom: 0.15rem;
+}
 .nav-foot button,
 .nav-foot button.ghost {
   background: #2a241d;
@@ -446,6 +454,22 @@ code { background: var(--line); padding: 0.05rem 0.3rem; border-radius: 4px; }
 .callout.face-needed {
   background: #fff4e5;
   border-color: #f0d2a0;
+}
+.callout.face-done {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+button.linkish {
+  background: transparent;
+  border: none;
+  color: #5b4a3a;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
 }
 .desk-page .now-card {
   flex: 0 0 auto;

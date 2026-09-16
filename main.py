@@ -377,7 +377,19 @@ def api_me_face_status(request: Request, db: Session = Depends(get_db)):
         "count": count,
         "needed": max(0, face_id.MIN_ENROLL_SAMPLES - count),
         "min_samples": face_id.MIN_ENROLL_SAMPLES,
+        "has_photo": face_id.thumb_path(user.id).is_file(),
     }
+
+
+@app.get("/api/me/face/photo")
+def api_me_face_photo(request: Request, db: Session = Depends(get_db)):
+    user = require(request, db, "employee")
+    if not user:
+        return JSONResponse({"ok": False}, status_code=401)
+    jpeg = face_id.read_thumbnail(user.id)
+    if not jpeg:
+        return Response(status_code=204)
+    return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/me/face/enroll")
@@ -443,18 +455,37 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         PREVIEW_FRAMES[user.id] = buf.tobytes()
         PREVIEW_META[user.id] = {"blocked": False}
     idle_seconds = int(payload.get("idle_seconds") or 0)
-    db.add(
-        Heartbeat(
-            user_id=user.id,
-            present=int(bool(present)),
-            idle=idle_seconds >= config.IDLE_AFTER_SECONDS,
-            idle_seconds=idle_seconds,
-            app=str(payload.get("app") or "Browser")[:80],
-            window_title=str(payload.get("window_title") or "My desk")[:180],
-            device=str(payload.get("device") or "browser")[:20],
-            created_at=utc_now(),
-        )
+    app_name = str(payload.get("app") or "Browser")[:80]
+    window_title = str(payload.get("window_title") or "My desk")[:180]
+    device = str(payload.get("device") or "browser")[:20]
+    # Avoid double-counting when browser tab + Windows agent both ping
+    last = (
+        db.query(Heartbeat)
+        .filter(Heartbeat.user_id == user.id)
+        .order_by(Heartbeat.id.desc())
+        .first()
     )
+    if last is not None and (analytics.seconds_ago(last.created_at) or 999) < 1.6:
+        last.present = int(bool(present))
+        last.idle = idle_seconds >= config.IDLE_AFTER_SECONDS
+        last.idle_seconds = idle_seconds
+        last.app = app_name
+        last.window_title = window_title
+        last.device = device
+        last.created_at = utc_now()
+    else:
+        db.add(
+            Heartbeat(
+                user_id=user.id,
+                present=int(bool(present)),
+                idle=idle_seconds >= config.IDLE_AFTER_SECONDS,
+                idle_seconds=idle_seconds,
+                app=app_name,
+                window_title=window_title,
+                device=device,
+                created_at=utc_now(),
+            )
+        )
     db.flush()
     start, end = analytics.day_range()
     summary = analytics.summarize(db, user.id, start, end)

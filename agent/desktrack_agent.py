@@ -3,27 +3,23 @@ DeskTrack Windows agent — background camera tracking for one employee.
 
 Features:
   - Uses the PC webcam (OpenCV)
+  - Reports the real foreground desktop app (not just the browser)
   - Blocks Windows sleep while clocked in
   - Queues frames when offline, uploads when back online
   - Server matches YOUR enrolled face only (person-specific presence)
 
-Setup:
-  1. Copy config.example.ini → config.ini and fill server + login
-  2. pip install -r requirements.txt
-  3. Enroll your face once on the website (My desk → Enroll face)
-  4. python desktrack_agent.py
-
-Or double-click: "Start DeskTrack Agent.bat"
+Setup: run Install-DeskTrack-Agent.bat once. It installs, starts hidden, and
+adds a Startup entry so you do not need to run it every day.
 """
 
 from __future__ import annotations
 
 import base64
 import configparser
+import ctypes
 import sqlite3
 import sys
 import time
-import ctypes
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,11 +29,24 @@ import requests
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.ini"
 QUEUE_DB = ROOT / "offline_queue.db"
+LOG_PATH = ROOT / "agent.log"
 
-# Windows: prevent sleep / display off while tracking
 ES_CONTINUOUS = 0x80000000
 ES_SYSTEM_REQUIRED = 0x00000001
 ES_DISPLAY_REQUIRED = 0x00000002
+
+
+def log(msg: str) -> None:
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
+    try:
+        with LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
 
 
 def prevent_sleep(on: bool) -> None:
@@ -54,10 +63,57 @@ def prevent_sleep(on: bool) -> None:
         pass
 
 
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+
+def idle_seconds_windows() -> int:
+    if sys.platform != "win32":
+        return 0
+    try:
+        info = LASTINPUTINFO()
+        info.cbSize = ctypes.sizeof(LASTINPUTINFO)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return 0
+        tick = ctypes.windll.kernel32.GetTickCount()
+        return max(0, int((tick - info.dwTime) / 1000))
+    except Exception:
+        return 0
+
+
+def foreground_window() -> tuple[str, str]:
+    """Return (app_name, window_title) for the active desktop window."""
+    if sys.platform != "win32":
+        return "DeskTrack Agent", "Agent"
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return "Desktop", ""
+    length = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    title = (buf.value or "").strip()
+
+    pid = ctypes.c_ulong()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    app = "Unknown"
+    if handle:
+        try:
+            size = ctypes.c_ulong(260)
+            path_buf = ctypes.create_unicode_buffer(260)
+            if kernel32.QueryFullProcessImageNameW(handle, 0, path_buf, ctypes.byref(size)):
+                app = Path(path_buf.value).stem or "Unknown"
+        finally:
+            kernel32.CloseHandle(handle)
+    return app[:80], title[:180]
+
+
 def load_config() -> configparser.ConfigParser:
     if not CONFIG_PATH.is_file():
-        print(f"Missing {CONFIG_PATH}")
-        print("Copy config.example.ini to config.ini and edit it.")
+        log(f"Missing {CONFIG_PATH}")
         sys.exit(1)
     cfg = configparser.ConfigParser()
     cfg.read(CONFIG_PATH, encoding="utf-8")
@@ -84,7 +140,6 @@ def init_queue() -> None:
 
 def queue_add(image_b64: str, idle_seconds: int, app: str, title: str) -> None:
     con = sqlite3.connect(QUEUE_DB)
-    # Cap queue so disk does not grow forever (~200 frames)
     count = con.execute("SELECT COUNT(*) FROM queue").fetchone()[0]
     if count >= 200:
         con.execute("DELETE FROM queue WHERE id IN (SELECT id FROM queue ORDER BY id LIMIT 50)")
@@ -119,7 +174,6 @@ def queue_flush(session: requests.Session, base: str) -> int:
                 con.execute("DELETE FROM queue WHERE id = ?", (row_id,))
                 sent += 1
             elif res.status_code in (401, 400):
-                # clocked out / auth — drop stale
                 con.execute("DELETE FROM queue WHERE id = ?", (row_id,))
             else:
                 break
@@ -163,46 +217,43 @@ def main() -> None:
     auto_clock_in = cfg.getboolean("agent", "auto_clock_in", fallback=True)
 
     if not username or not password:
-        print("Set username and password in config.ini")
+        log("Set username and password in config.ini")
         sys.exit(1)
 
     init_queue()
     session = requests.Session()
-    print(f"Logging in as {username} → {base}")
+    log(f"Logging in as {username} -> {base}")
     user = login(session, base, username, password)
     if user.get("role") != "employee":
-        print("Agent is for employee accounts only.")
+        log("Agent is for employee accounts only.")
         sys.exit(1)
-    print(f"Hello {user.get('name')}. Face must be enrolled on the website (My desk).")
+    log(f"Hello {user.get('name')}. Tracking in background.")
 
     if auto_clock_in:
         if ensure_clocked_in(session, base):
-            print("Clocked in.")
+            log("Clocked in.")
         else:
-            print("Could not clock in — check the website.")
+            log("Could not clock in — check the website.")
 
     cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW if sys.platform == "win32" else 0)
     if not cap.isOpened():
         cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
-        print(f"Cannot open camera index {camera_index}")
+        log(f"Cannot open camera index {camera_index}")
         sys.exit(1)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
 
     prevent_sleep(True)
-    print("Tracking started. Keep this window open. Ctrl+C to stop.")
-    print("Windows sleep is blocked while the agent runs.")
+    log("Tracking started (silent). Sleep blocked while running.")
 
-    last_input = time.time()
     last_status = ""
     try:
         while True:
-            # Flush offline queue when possible
             try:
                 n = queue_flush(session, base)
                 if n:
-                    print(f"Uploaded {n} queued frame(s).")
+                    log(f"Uploaded {n} queued frame(s).")
             except Exception:
                 pass
 
@@ -211,8 +262,8 @@ def main() -> None:
                 time.sleep(1)
                 continue
 
-            # Simple idle: no keyboard activity API in headless agent → use 0 when sending live
-            idle_seconds = 0
+            idle_seconds = idle_seconds_windows()
+            app_name, win_title = foreground_window()
             ok_enc, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 55])
             if not ok_enc:
                 time.sleep(interval)
@@ -225,23 +276,23 @@ def main() -> None:
                     json={
                         "image": image_b64,
                         "idle_seconds": idle_seconds,
-                        "app": "DeskTrack Agent",
-                        "window_title": "DeskTrack Agent",
+                        "app": app_name,
+                        "window_title": win_title,
                         "device": "laptop",
                     },
                     timeout=20,
                 )
                 if res.status_code == 400 and "clocked out" in (res.text or "").lower():
                     if auto_clock_in and ensure_clocked_in(session, base):
-                        print("Re-clocked in.")
+                        log("Re-clocked in.")
                     else:
-                        print("Clocked out on server. Waiting…")
+                        log("Clocked out on server. Waiting…")
                         prevent_sleep(False)
                         time.sleep(5)
                         prevent_sleep(True)
                         continue
                 if res.status_code == 401:
-                    print("Session expired — logging in again…")
+                    log("Session expired — logging in again…")
                     login(session, base, username, password)
                     continue
                 if res.status_code != 200:
@@ -249,23 +300,23 @@ def main() -> None:
                 data = res.json()
                 present = data.get("present")
                 identity = data.get("identity") or {}
-                msg = f"present={present}"
+                msg = f"present={present} app={app_name}"
                 if identity.get("required"):
                     msg += f" identity={identity.get('reason')} score={identity.get('score')}"
                 if msg != last_status:
-                    print(time.strftime("%H:%M:%S"), msg)
+                    log(msg)
                     last_status = msg
             except requests.RequestException as exc:
-                queue_add(image_b64, idle_seconds, "DeskTrack Agent", "Offline queue")
-                print(f"{time.strftime('%H:%M:%S')} offline — queued ({exc})")
+                queue_add(image_b64, idle_seconds, app_name, win_title or "Offline queue")
+                log(f"offline — queued ({exc})")
 
             time.sleep(max(1.0, interval))
     except KeyboardInterrupt:
-        print("\nStopping…")
+        log("Stopping…")
     finally:
         prevent_sleep(False)
         cap.release()
-        print("Agent stopped. Sleep allowed again.")
+        log("Agent stopped. Sleep allowed again.")
 
 
 if __name__ == "__main__":

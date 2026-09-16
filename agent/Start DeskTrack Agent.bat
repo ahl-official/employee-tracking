@@ -1,9 +1,8 @@
 @echo off
-cd /d "%~dp0"
-if not exist config.ini (
-  echo Copy config.example.ini to config.ini and fill your login first.
-  pause
-  exit /b 1
+REM Starts agent hidden (no terminal). Prefer this after install.
+set "DIR=%~dp0"
+if exist "%DIR%Start-Hidden.vbs" (
+  wscript //nologo "%DIR%Start-Hidden.vbs"
+) else (
+  start "" /B pythonw "%DIR%desktrack_agent.py"
 )
-python desktrack_agent.py
-pause

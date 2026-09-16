@@ -182,21 +182,22 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         else:
             delta = config.HEARTBEAT_SECONDS
         delta = min(max(delta, 0), cap)
+        # Seated / active / idle only when at desk — Active + Idle = Seated
         if row.present == 1:
             seated += delta
+            raw_app = (row.app or "").strip() or "unknown"
+            key = app_key(raw_app)
+            apps[key] = apps.get(key, 0) + delta
+            if row.idle:
+                idle += delta
+            else:
+                active += delta
+                if classify_app(raw_app, row.window_title) == "work":
+                    work += delta
+                else:
+                    other += delta
         elif row.present == 0:
             away += delta
-        raw_app = (row.app or "").strip() or "unknown"
-        key = app_key(raw_app)
-        apps[key] = apps.get(key, 0) + delta
-        if row.idle:
-            idle += delta
-        else:
-            active += delta
-            if classify_app(raw_app, row.window_title) == "work":
-                work += delta
-            else:
-                other += delta
     all_apps = sorted(apps.items(), key=lambda item: item[1], reverse=True)
     useful = (work / (work + other) * 100) if (work + other) else 0
     allowance = config.BREAK_ALLOWANCE_SECONDS
