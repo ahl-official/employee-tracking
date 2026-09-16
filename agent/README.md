@@ -1,26 +1,16 @@
-# DeskTrack Windows Agent
+# DeskTrack Windows Agent (apps only)
 
-Background webcam + desktop-app tracker. Presence counts only when **your enrolled face** is at the desk.
+Split mode:
+- **Chrome / My desk** — webcam, face identity, presence (smooth live view)
+- **This agent** — reports which desktop app is focused (Cursor, Slack, etc.)
 
-## Employee setup (once)
+No camera in the agent. No frames uploaded. Heartbeats on the server are cleaned up after 14 days.
 
-1. Install [Python 3](https://www.python.org/downloads/) — tick **Add to PATH**.
-2. Run `Install-DeskTrack-Agent.bat` (share this one file from HR).
-3. Enter username / password (server URL default is fine).
-4. Installer downloads the agent, starts it **hidden** (no terminal), and adds a **Windows Startup** shortcut.
+## Install once
 
-You do **not** run the installer every day. After Windows login, tracking starts by itself.
+1. Python 3 with PATH  
+2. Run `Install-DeskTrack-Agent.bat`  
+3. Enroll face on the website, Clock in, keep My desk open  
+4. Agent starts hidden and on Windows login  
 
-Then once on the website: log in → **Enroll face** → done. The agent auto clock-ins and reports apps + presence.
-
-## Why seated / active looked wrong
-
-Seated = time your face is present. Active = seated and moving the mouse/keyboard. Idle = seated but inactive. **Active + Idle = Seated.**
-
-## Apps today
-
-The website alone can only see the browser name. With the agent running, **Apps today** lists real desktop apps (Chrome, VS Code, Slack, etc.).
-
-## Face enrollment
-
-Enroll once on **My desk**. After that the big enroll box is replaced by a short “Face enrolled” message, and your photo appears in the left sidebar.
+You do not run the installer daily.

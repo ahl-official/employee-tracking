@@ -1,34 +1,24 @@
 """
-DeskTrack Windows agent — background camera tracking for one employee.
+DeskTrack Windows agent — apps only (split mode).
 
-Features:
-  - Uses the PC webcam (OpenCV)
-  - Reports the real foreground desktop app (not just the browser)
-  - Blocks Windows sleep while clocked in
-  - Queues frames when offline, uploads when back online
-  - Server matches YOUR enrolled face only (person-specific presence)
+Browser (Chrome) owns the webcam for face + presence.
+This agent only reports the foreground desktop app to the server.
 
-Setup: run Install-DeskTrack-Agent.bat once. It installs, starts hidden, and
-adds a Startup entry so you do not need to run it every day.
+Setup: Install-DeskTrack-Agent.bat once (Startup + hidden).
 """
 
 from __future__ import annotations
 
-import base64
 import configparser
 import ctypes
-import sqlite3
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
-import cv2
 import requests
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.ini"
-QUEUE_DB = ROOT / "offline_queue.db"
 LOG_PATH = ROOT / "agent.log"
 
 ES_CONTINUOUS = 0x80000000
@@ -63,28 +53,9 @@ def prevent_sleep(on: bool) -> None:
         pass
 
 
-class LASTINPUTINFO(ctypes.Structure):
-    _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
-
-
-def idle_seconds_windows() -> int:
-    if sys.platform != "win32":
-        return 0
-    try:
-        info = LASTINPUTINFO()
-        info.cbSize = ctypes.sizeof(LASTINPUTINFO)
-        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
-            return 0
-        tick = ctypes.windll.kernel32.GetTickCount()
-        return max(0, int((tick - info.dwTime) / 1000))
-    except Exception:
-        return 0
-
-
 def foreground_window() -> tuple[str, str]:
-    """Return (app_name, window_title) for the active desktop window."""
     if sys.platform != "win32":
-        return "DeskTrack Agent", "Agent"
+        return "Unknown", ""
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
     hwnd = user32.GetForegroundWindow()
@@ -94,11 +65,9 @@ def foreground_window() -> tuple[str, str]:
     buf = ctypes.create_unicode_buffer(length + 1)
     user32.GetWindowTextW(hwnd, buf, length + 1)
     title = (buf.value or "").strip()
-
     pid = ctypes.c_ulong()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    handle = kernel32.OpenProcess(0x1000, False, pid.value)
     app = "Unknown"
     if handle:
         try:
@@ -120,70 +89,6 @@ def load_config() -> configparser.ConfigParser:
     return cfg
 
 
-def init_queue() -> None:
-    con = sqlite3.connect(QUEUE_DB)
-    con.execute(
-        """
-        CREATE TABLE IF NOT EXISTS queue (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT NOT NULL,
-            image_b64 TEXT NOT NULL,
-            idle_seconds INTEGER NOT NULL,
-            app TEXT,
-            window_title TEXT
-        )
-        """
-    )
-    con.commit()
-    con.close()
-
-
-def queue_add(image_b64: str, idle_seconds: int, app: str, title: str) -> None:
-    con = sqlite3.connect(QUEUE_DB)
-    count = con.execute("SELECT COUNT(*) FROM queue").fetchone()[0]
-    if count >= 200:
-        con.execute("DELETE FROM queue WHERE id IN (SELECT id FROM queue ORDER BY id LIMIT 50)")
-    con.execute(
-        "INSERT INTO queue (created_at, image_b64, idle_seconds, app, window_title) VALUES (?,?,?,?,?)",
-        (datetime.now(timezone.utc).isoformat(), image_b64, idle_seconds, app, title),
-    )
-    con.commit()
-    con.close()
-
-
-def queue_flush(session: requests.Session, base: str) -> int:
-    con = sqlite3.connect(QUEUE_DB)
-    rows = con.execute(
-        "SELECT id, image_b64, idle_seconds, app, window_title FROM queue ORDER BY id LIMIT 30"
-    ).fetchall()
-    sent = 0
-    for row_id, image_b64, idle_seconds, app, title in rows:
-        try:
-            res = session.post(
-                f"{base}/api/me/track",
-                json={
-                    "image": image_b64,
-                    "idle_seconds": idle_seconds,
-                    "app": app or "DeskTrack Agent",
-                    "window_title": title or "Agent",
-                    "device": "laptop",
-                },
-                timeout=20,
-            )
-            if res.status_code == 200:
-                con.execute("DELETE FROM queue WHERE id = ?", (row_id,))
-                sent += 1
-            elif res.status_code in (401, 400):
-                con.execute("DELETE FROM queue WHERE id = ?", (row_id,))
-            else:
-                break
-        except requests.RequestException:
-            break
-    con.commit()
-    con.close()
-    return sent
-
-
 def login(session: requests.Session, base: str, username: str, password: str) -> dict:
     res = session.post(
         f"{base}/api/login",
@@ -200,44 +105,10 @@ def ensure_clocked_in(session: requests.Session, base: str) -> bool:
     res = session.get(f"{base}/api/me", timeout=15)
     if res.status_code != 200:
         return False
-    data = res.json()
-    if data.get("clocked_in"):
+    if res.json().get("clocked_in"):
         return True
     res = session.post(f"{base}/api/clock", json={"action": "in"}, timeout=15)
-    return res.status_code == 200 and res.json().get("clocked_in", True)
-
-
-def open_camera(preferred_index: int = 0):
-    """Open the first camera that returns a non-black frame. Prefer MSMF on Windows (less exclusive)."""
-    backends = []
-    if sys.platform == "win32":
-        backends = [cv2.CAP_MSMF, cv2.CAP_DSHOW, 0]
-    else:
-        backends = [0]
-    indices = []
-    for i in (preferred_index, 0, 1, 2):
-        if i not in indices:
-            indices.append(i)
-    for backend in backends:
-        for idx in indices:
-            try:
-                cap = cv2.VideoCapture(idx, backend) if backend else cv2.VideoCapture(idx)
-            except Exception:
-                continue
-            if not cap.isOpened():
-                cap.release()
-                continue
-            # Warm up a few frames
-            ok, frame = False, None
-            for _ in range(5):
-                ok, frame = cap.read()
-                if ok and frame is not None and float(frame.mean()) >= 12.0:
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
-                    log(f"Using camera index {idx} backend={backend}")
-                    return cap, idx
-            cap.release()
-    return None, preferred_index
+    return res.status_code == 200
 
 
 def main() -> None:
@@ -245,110 +116,47 @@ def main() -> None:
     base = cfg.get("server", "url", fallback="http://127.0.0.1:8000").rstrip("/")
     username = cfg.get("auth", "username", fallback="").strip()
     password = cfg.get("auth", "password", fallback="")
-    camera_index = cfg.getint("agent", "camera_index", fallback=0)
-    interval = cfg.getfloat("agent", "interval_seconds", fallback=2.0)
+    interval = cfg.getfloat("agent", "interval_seconds", fallback=3.0)
     auto_clock_in = cfg.getboolean("agent", "auto_clock_in", fallback=True)
 
     if not username or not password:
         log("Set username and password in config.ini")
         sys.exit(1)
 
-    init_queue()
     session = requests.Session()
     log(f"Logging in as {username} -> {base}")
     user = login(session, base, username, password)
     if user.get("role") != "employee":
         log("Agent is for employee accounts only.")
         sys.exit(1)
-    log(f"Hello {user.get('name')}. Tracking in background.")
+    log(f"Hello {user.get('name')}. Apps-only agent (camera stays in Chrome).")
 
     if auto_clock_in:
         if ensure_clocked_in(session, base):
             log("Clocked in.")
         else:
-            log("Could not clock in — check the website.")
-
-    cap, camera_index = open_camera(camera_index)
-    if cap is None:
-        log("Cannot open a working camera. Close Chrome/Edge camera on DeskTrack, then restart the agent.")
-        sys.exit(1)
+            log("Could not clock in — open the website and Clock in.")
 
     prevent_sleep(True)
-    log("Tracking started (silent). Sleep blocked while running.")
-    log("Tip: keep My desk open for status, but do not Allow camera in Chrome while the agent runs.")
-
-    last_status = ""
-    dark_streak = 0
+    log("Reporting desktop apps. Keep My desk open in Chrome for face/presence.")
+    last = ""
     try:
         while True:
-            try:
-                n = queue_flush(session, base)
-                if n:
-                    log(f"Uploaded {n} queued frame(s).")
-            except Exception:
-                pass
-
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                time.sleep(1)
-                dark_streak += 1
-                if dark_streak >= 10:
-                    log("Re-opening camera…")
-                    cap.release()
-                    cap, camera_index = open_camera(camera_index)
-                    dark_streak = 0
-                    if cap is None:
-                        log("Camera lost. Waiting…")
-                        time.sleep(5)
-                        cap, camera_index = open_camera(camera_index)
-                continue
-
-            idle_seconds = idle_seconds_windows()
             app_name, win_title = foreground_window()
-            mean = float(frame.mean())
-            if mean < 12.0:
-                dark_streak += 1
-                if dark_streak == 1 or dark_streak % 15 == 0:
-                    log(
-                        "Camera frame is dark — close the website camera (Clock out or deny cam in Chrome), "
-                        "then wait a few seconds."
-                    )
-                if dark_streak >= 20:
-                    log("Re-opening camera after dark frames…")
-                    cap.release()
-                    time.sleep(1)
-                    cap, camera_index = open_camera(camera_index)
-                    dark_streak = 0
-                    if cap is None:
-                        time.sleep(3)
-                        continue
-                # Still send apps so Apps today stays alive; server holds last present
-            else:
-                dark_streak = 0
-
-            ok_enc, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 55])
-            if not ok_enc:
-                time.sleep(interval)
-                continue
-            image_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
-
             try:
                 res = session.post(
-                    f"{base}/api/me/track",
-                    json={
-                        "image": image_b64,
-                        "idle_seconds": idle_seconds,
-                        "app": app_name,
-                        "window_title": win_title,
-                        "device": "laptop",
-                    },
-                    timeout=20,
+                    f"{base}/api/me/apps",
+                    json={"app": app_name, "window_title": win_title},
+                    timeout=15,
                 )
                 if res.status_code == 400 and "clocked out" in (res.text or "").lower():
                     if auto_clock_in and ensure_clocked_in(session, base):
                         log("Re-clocked in.")
                     else:
-                        log("Clocked out on server. Waiting…")
+                        msg = "Clocked out — waiting…"
+                        if msg != last:
+                            log(msg)
+                            last = msg
                         prevent_sleep(False)
                         time.sleep(5)
                         prevent_sleep(True)
@@ -359,29 +167,18 @@ def main() -> None:
                     continue
                 if res.status_code != 200:
                     raise requests.RequestException(f"HTTP {res.status_code}")
-                data = res.json()
-                present = data.get("present")
-                identity = data.get("identity") or {}
-                msg = f"present={present} app={app_name}"
-                if identity.get("required"):
-                    msg += f" identity={identity.get('reason')} score={identity.get('score')}"
-                if mean < 12.0:
-                    msg += " (dark_frame)"
-                if msg != last_status:
+                msg = f"app={app_name}"
+                if msg != last:
                     log(msg)
-                    last_status = msg
+                    last = msg
             except requests.RequestException as exc:
-                queue_add(image_b64, idle_seconds, app_name, win_title or "Offline queue")
-                log(f"offline — queued ({exc})")
-
-            time.sleep(max(1.0, interval))
+                log(f"offline ({exc})")
+            time.sleep(max(2.0, interval))
     except KeyboardInterrupt:
         log("Stopping…")
     finally:
         prevent_sleep(False)
-        if cap is not None:
-            cap.release()
-        log("Agent stopped. Sleep allowed again.")
+        log("Agent stopped.")
 
 
 if __name__ == "__main__":

@@ -27,13 +27,10 @@ export default function Desk() {
 
   const [me, setMe] = useState(null);
   const [camOn, setCamOn] = useState(false);
-  const [agentPreview, setAgentPreview] = useState(null);
   const [emptyMsg, setEmptyMsg] = useState("Clock in — Chrome will ask to use your camera. Allow it.");
   const [face, setFace] = useState({ enrolled: false, count: 0, needed: 5 });
   const [faceMsg, setFaceMsg] = useState("");
   const [enrolling, setEnrolling] = useState(false);
-
-  const usingAgent = !!(me?.agent_live && me?.device === "laptop");
 
 
   const showCam = useCallback((on) => {
@@ -134,13 +131,6 @@ export default function Desk() {
     if (!ok) return;
     meRef.current = data;
     setMe(data);
-    const agentOwnsCam = !!(data.agent_live && data.device === "laptop");
-    // Agent owns the webcam — never open Chrome's camera (that makes agent frames black)
-    if (agentOwnsCam) {
-      if (streamRef.current) stopCamera();
-      setEmptyMsg("Live view from Windows agent (browser camera stays off so the agent can see you).");
-      return;
-    }
     if (data.clocked_in && !streamRef.current && !camTried.current) {
       camTried.current = true;
       startCamera();
@@ -148,17 +138,10 @@ export default function Desk() {
     if (!data.clocked_in && streamRef.current) stopCamera();
     if (!data.clocked_in) {
       setEmptyMsg("Clock in — Chrome will ask to use your camera. Allow it.");
-      setAgentPreview(null);
     }
   }, [startCamera, stopCamera]);
 
   async function enrollFaceOnce() {
-    if (meRef.current?.agent_live && meRef.current?.device === "laptop") {
-      setFaceMsg(
-        "Windows agent is using the camera. Exit DeskTrack Agent (Task Manager → pythonw), enroll here, then start the agent again."
-      );
-      return;
-    }
     const video = videoRef.current;
     if (!streamRef.current || !video || video.readyState < 2) {
       const cam = await startCamera();
@@ -226,17 +209,12 @@ export default function Desk() {
         return;
       }
       stopCamera();
-      setAgentPreview(null);
       camTried.current = false;
       await refresh();
       return;
     }
-    // If agent is already running, do not grab the webcam in Chrome
-    const agentOwns = !!(meRef.current?.agent_live && meRef.current?.device === "laptop");
-    if (!agentOwns) {
-      const cam = await startCamera();
-      if (!cam) return;
-    }
+    const cam = await startCamera();
+    if (!cam) return;
     const { ok, data } = await api("/api/clock", {
       method: "POST",
       body: JSON.stringify({ action: "in" }),
@@ -275,28 +253,6 @@ export default function Desk() {
     refreshFace();
     const t1 = setInterval(refresh, 3000);
     const t2 = setInterval(async () => {
-      const agentOwns = !!(meRef.current?.agent_live && meRef.current?.device === "laptop");
-      if (agentOwns) {
-        // Pull annotated frame from server (agent uploaded it) — do not use browser camera
-        try {
-          const res = await fetch(`/api/me/preview?t=${Date.now()}`, {
-            credentials: "include",
-            cache: "no-store",
-          });
-          if (res.status === 200) {
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            setAgentPreview((prev) => {
-              if (prev) URL.revokeObjectURL(prev);
-              return url;
-            });
-            showCam(true);
-          }
-        } catch {
-          /* ignore */
-        }
-        return;
-      }
       const video = videoRef.current;
       if (!streamRef.current || !meRef.current?.clocked_in || !video || video.readyState < 2) return;
       const shot = document.createElement("canvas");
@@ -324,11 +280,7 @@ export default function Desk() {
       }
       drawOverlay(lastPresent.current);
     }, 2000);
-    const t3 = setInterval(() => {
-      if (!(meRef.current?.agent_live && meRef.current?.device === "laptop")) {
-        drawOverlay(lastPresent.current);
-      }
-    }, 300);
+    const t3 = setInterval(() => drawOverlay(lastPresent.current), 300);
     return () => {
       ["mousemove", "keydown", "click", "scroll"].forEach((ev) => window.removeEventListener(ev, bump));
       document.removeEventListener("visibilitychange", onVisibility);
@@ -338,12 +290,8 @@ export default function Desk() {
       clearInterval(t2);
       clearInterval(t3);
       stopCamera();
-      setAgentPreview((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
     };
-  }, [refresh, refreshFace, stopCamera, drawOverlay, showCam]);
+  }, [refresh, refreshFace, stopCamera, drawOverlay]);
 
   function toggleFullscreen() {
     const wrap = wrapRef.current;
@@ -362,12 +310,10 @@ export default function Desk() {
 
   let callout = "Clocked out. Click Clock in — the browser will ask to use your camera. Click Allow.";
   let calloutOk = false;
-  if (usingAgent) {
-    callout =
-      "Windows agent is tracking (apps + face). Live view below comes from the agent — Chrome does not use the camera.";
-    calloutOk = true;
-  } else if (p?.clocked_in && camOn) {
-    callout = "Camera is on. Keep this tab open while you work. Clock out to turn it off. Video is not saved.";
+  if (p?.clocked_in && camOn) {
+    callout = p?.agent_apps
+      ? "Camera is on for face/presence. Windows agent is sending desktop apps. Keep this tab open."
+      : "Camera is on. Keep this tab open while you work. Clock out to turn it off. Video is not saved.";
     calloutOk = true;
   } else if (p?.clocked_in) {
     callout = "You are clocked in. Click Clock in again if the camera is not showing, and Allow access.";
@@ -442,19 +388,9 @@ export default function Desk() {
         <section className="monitor-card card">
           <h2>Live monitoring</h2>
           <div className="video-wrap" ref={wrapRef} title="Click for fullscreen" onClick={toggleFullscreen}>
-            {usingAgent ? (
-              agentPreview ? (
-                <img className="agent-preview on" src={agentPreview} alt="Live from agent" />
-              ) : (
-                <p className="muted">{emptyMsg}</p>
-              )
-            ) : (
-              <>
-                <video ref={videoRef} className={camOn ? "on" : ""} autoPlay playsInline muted />
-                <canvas ref={overlayRef} />
-                {!camOn ? <p className="muted">{emptyMsg}</p> : null}
-              </>
-            )}
+            <video ref={videoRef} className={camOn ? "on" : ""} autoPlay playsInline muted />
+            <canvas ref={overlayRef} />
+            {!camOn ? <p className="muted">{emptyMsg}</p> : null}
             <span className="fs-hint">Click for fullscreen</span>
           </div>
           <p className="legend">
@@ -502,8 +438,7 @@ export default function Desk() {
           <article className="card apps-card">
             <h2>Apps today</h2>
             <p className="hint apps-hint">
-              With the DeskTrack Agent running, desktop apps are listed here. Browser-only tracking shows the
-              browser name (Chrome, Edge…).
+              Desktop apps come from the Windows agent. Face and presence come from this browser camera.
             </p>
             <ul className="apps">
               {(today.apps || []).length ? (

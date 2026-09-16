@@ -1,3 +1,1 @@
 requests>=2.32
-opencv-python>=4.12
-numpy>=2

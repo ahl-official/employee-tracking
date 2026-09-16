@@ -82,6 +82,12 @@ OFFLINE_AFTER_SECONDS = _int("OFFLINE_AFTER_SECONDS", 25)
 SLEEP_GAP_SECONDS = _int("SLEEP_GAP_SECONDS", 45)
 # Keep "present" briefly if face briefly leaves frame / looks away
 IDENTITY_HOLD_SECONDS = _int("IDENTITY_HOLD_SECONDS", 12)
+# Delete heartbeats older than this (keeps SQLite small). Reports only need recent days.
+HEARTBEAT_KEEP_DAYS = _int("HEARTBEAT_KEEP_DAYS", 14)
+# Delete acknowledged alerts older than this
+ALERT_KEEP_DAYS = _int("ALERT_KEEP_DAYS", 30)
+# Min seconds between stored heartbeats per user (dedupe browser pings)
+TRACK_MIN_INTERVAL = float(os.getenv("TRACK_MIN_INTERVAL", "3"))
 # Optional: POST JSON alerts to Slack/Teams/Discord/custom webhook when HR is offline
 HR_ALERT_WEBHOOK = os.getenv("HR_ALERT_WEBHOOK", "").strip()
 HR_ALERT_EMAIL = os.getenv("HR_ALERT_EMAIL", "").strip()

@@ -12,6 +12,8 @@ import base64
 import csv
 import io
 import json
+import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -29,13 +31,16 @@ import analytics
 import config
 import detector
 import face_id
-from database import init_db, utc_now, _keep_demo_fresh
+from database import init_db, purge_old_data, utc_now, _keep_demo_fresh
 from models import Alert, Heartbeat, SessionLocal, User, WorkSession
 
 PREVIEW_FRAMES: dict[int, bytes] = {}
 PREVIEW_META: dict[int, dict] = {}
+# Latest desktop app from Windows agent (no camera) — merged into browser presence pings
+AGENT_FOREGROUND: dict[int, dict] = {}
 _DETECT_NET = None
 _DETECT_FACE = None
+_cleanup_stop = threading.Event()
 
 
 def get_detector():
@@ -45,10 +50,22 @@ def get_detector():
     return _DETECT_NET, _DETECT_FACE
 
 
+def _cleanup_loop():
+    while not _cleanup_stop.wait(6 * 3600):
+        try:
+            purge_old_data()
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    _cleanup_stop.clear()
+    t = threading.Thread(target=_cleanup_loop, daemon=True)
+    t.start()
     yield
+    _cleanup_stop.set()
 
 
 app = FastAPI(
@@ -162,7 +179,16 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
             if beat
             else "offline"
         )
-    age = analytics.seconds_ago(beat.created_at) if beat else None
+    fg = AGENT_FOREGROUND.get(emp.id) or {}
+    agent_apps = bool(fg) and (time.time() - float(fg.get("at") or 0)) <= 30
+    # Prefer live desktop app from agent over stale heartbeat app label
+    live_app = beat.app if beat else None
+    live_title = beat.window_title if beat else None
+    live_device = beat.device if beat else None
+    if agent_apps:
+        live_app = fg.get("app") or live_app
+        live_title = fg.get("title") or live_title
+        live_device = "laptop"
     return {
         "id": emp.id,
         "name": emp.name,
@@ -176,11 +202,12 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
         "present": None if beat is None else beat.present,
         "idle": None if beat is None else beat.idle,
         "idle_seconds": 0 if beat is None else beat.idle_seconds,
-        "app": None if beat is None else analytics.pretty_app_name(beat.app),
-        "window_title": None if beat is None else beat.window_title,
-        "device": None if beat is None else beat.device,
+        "app": None if live_app is None else analytics.pretty_app_name(live_app),
+        "window_title": live_title,
+        "device": live_device,
         "updated": iso(None if beat is None else beat.created_at),
-        "agent_live": viewing_today and age is not None and age <= config.OFFLINE_AFTER_SECONDS,
+        "agent_live": False,
+        "agent_apps": viewing_today and agent_apps,
         "camera_blocked": bool(PREVIEW_META.get(emp.id, {}).get("blocked")),
         "has_preview": emp.id in PREVIEW_FRAMES,
         "face_enrolled": face_id.has_enrollment(emp.id),
@@ -492,9 +519,51 @@ def api_me_face_clear(request: Request, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@app.post("/api/me/apps")
+def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Windows agent: desktop app only (no camera). Merged into browser presence heartbeats."""
+    user = require(request, db, "employee")
+    if not user:
+        return JSONResponse({"ok": False}, status_code=401)
+    analytics.close_overnight_sessions(db, user.id)
+    if analytics.open_session(db, user.id) is None:
+        return JSONResponse({"ok": False, "error": "clocked out"}, status_code=400)
+    app_name = str(payload.get("app") or "Unknown")[:80]
+    window_title = str(payload.get("window_title") or "")[:180]
+    AGENT_FOREGROUND[user.id] = {"app": app_name, "title": window_title, "at": time.time()}
+    last = (
+        db.query(Heartbeat)
+        .filter(Heartbeat.user_id == user.id)
+        .order_by(Heartbeat.id.desc())
+        .first()
+    )
+    if last is not None and (analytics.seconds_ago(last.created_at) or 999) < 12:
+        last.app = app_name
+        last.window_title = window_title
+        if last.device in {None, "", "browser", "unknown"}:
+            last.device = "laptop"
+        db.commit()
+    return {"ok": True, "app": analytics.pretty_app_name(app_name)}
+
+
+def _resolve_app_fields(user_id: int, payload: dict) -> tuple[str, str, str]:
+    fg = AGENT_FOREGROUND.get(user_id) or {}
+    if fg and (time.time() - float(fg.get("at") or 0)) < 20:
+        return (
+            str(fg.get("app") or "Unknown")[:80],
+            str(fg.get("title") or "")[:180],
+            "laptop",
+        )
+    return (
+        str(payload.get("app") or "Browser")[:80],
+        str(payload.get("window_title") or "My desk")[:180],
+        str(payload.get("device") or "browser")[:20],
+    )
+
+
 @app.post("/api/me/track")
 def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
-    """Browser/agent camera frames while clocked in. Nothing is stored as video."""
+    """Browser camera frames while clocked in. Face identity + presence. Video is not stored."""
     user = require(request, db, "employee")
     if not user:
         return JSONResponse({"ok": False}, status_code=401)
@@ -509,30 +578,38 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
     if frame is None:
         return JSONResponse({"ok": False, "error": "bad image"}, status_code=400)
 
-    # Black / empty frame (camera busy or lid closed) — do not flip to Break
+    app_name, window_title, device = _resolve_app_fields(user.id, payload)
+    last = (
+        db.query(Heartbeat)
+        .filter(Heartbeat.user_id == user.id)
+        .order_by(Heartbeat.id.desc())
+        .first()
+    )
+    min_gap = float(getattr(config, "TRACK_MIN_INTERVAL", 3))
+
+    # Black / empty frame — do not flip to Break
     if float(np.mean(frame)) < 12.0:
-        last = (
-            db.query(Heartbeat)
-            .filter(Heartbeat.user_id == user.id)
-            .order_by(Heartbeat.id.desc())
-            .first()
-        )
-        app_name = str(payload.get("app") or "Browser")[:80]
-        window_title = str(payload.get("window_title") or "My desk")[:180]
-        device = str(payload.get("device") or "browser")[:20]
         held_present = bool(last and last.present == 1)
-        db.add(
-            Heartbeat(
-                user_id=user.id,
-                present=int(held_present),
-                idle=False,
-                idle_seconds=0,
-                app=app_name,
-                window_title=window_title,
-                device=device,
-                created_at=utc_now(),
+        if last is not None and (analytics.seconds_ago(last.created_at) or 999) < min_gap:
+            last.present = int(held_present)
+            last.idle = False
+            last.app = app_name
+            last.window_title = window_title
+            last.device = device
+            last.created_at = utc_now()
+        else:
+            db.add(
+                Heartbeat(
+                    user_id=user.id,
+                    present=int(held_present),
+                    idle=False,
+                    idle_seconds=0,
+                    app=app_name,
+                    window_title=window_title,
+                    device=device,
+                    created_at=utc_now(),
+                )
             )
-        )
         db.flush()
         start, end = analytics.day_range()
         summary = analytics.summarize(db, user.id, start, end)
@@ -566,17 +643,6 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         PREVIEW_FRAMES[user.id] = buf.tobytes()
         PREVIEW_META[user.id] = {"blocked": False}
 
-    # Live frame means PC is awake — Idle KPI is sleep gaps, not mouse inactivity
-    app_name = str(payload.get("app") or "Browser")[:80]
-    window_title = str(payload.get("window_title") or "My desk")[:180]
-    device = str(payload.get("device") or "browser")[:20]
-    last = (
-        db.query(Heartbeat)
-        .filter(Heartbeat.user_id == user.id)
-        .order_by(Heartbeat.id.desc())
-        .first()
-    )
-    # Prefer keeping present if a bad no_face agent frame tries to overwrite a good match
     if (
         last is not None
         and last.present == 1
@@ -587,19 +653,13 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         present = True
         identity = {**identity, "matched": True, "reason": "hold"}
 
-    if last is not None and (analytics.seconds_ago(last.created_at) or 999) < 1.6:
-        # Prefer agent apps over generic Browser when merging
-        if device == "laptop" or (app_name and app_name not in {"Browser", "DeskTrack Agent"}):
-            last.app = app_name
-            last.window_title = window_title
-            last.device = device
-        elif not last.app:
-            last.app = app_name
-            last.window_title = window_title
-            last.device = device
+    if last is not None and (analytics.seconds_ago(last.created_at) or 999) < min_gap:
         last.present = int(bool(present))
         last.idle = False
         last.idle_seconds = 0
+        last.app = app_name
+        last.window_title = window_title
+        last.device = device
         last.created_at = utc_now()
     else:
         db.add(
@@ -626,6 +686,7 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         "identity": identity,
         "width": int(frame.shape[1]),
         "height": int(frame.shape[0]),
+        "app": analytics.pretty_app_name(app_name),
     }
 
 
