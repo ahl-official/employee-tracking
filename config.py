@@ -78,6 +78,13 @@ IDLE_AFTER_SECONDS = _int("IDLE_AFTER_SECONDS", 60)
 AWAY_ALERT_SECONDS = _int("AWAY_ALERT_SECONDS", 120)
 BREAK_ALLOWANCE_SECONDS = _int("BREAK_ALLOWANCE_SECONDS", 30 * 60)
 OFFLINE_AFTER_SECONDS = _int("OFFLINE_AFTER_SECONDS", 25)
+# Treat heartbeat gaps longer than this as laptop sleep (Idle KPI)
+SLEEP_GAP_SECONDS = _int("SLEEP_GAP_SECONDS", 45)
+# Keep "present" briefly if face briefly leaves frame / looks away
+IDENTITY_HOLD_SECONDS = _int("IDENTITY_HOLD_SECONDS", 12)
+# Optional: POST JSON alerts to Slack/Teams/Discord/custom webhook when HR is offline
+HR_ALERT_WEBHOOK = os.getenv("HR_ALERT_WEBHOOK", "").strip()
+HR_ALERT_EMAIL = os.getenv("HR_ALERT_EMAIL", "").strip()
 
 WORK_START_HOUR = _int("WORK_START_HOUR", 9)
 WORK_END_HOUR = _int("WORK_END_HOUR", 19)

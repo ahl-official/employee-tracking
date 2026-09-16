@@ -11,8 +11,9 @@ Production: see DEPLOY.md
 import base64
 import csv
 import io
+import json
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import cv2
@@ -221,14 +222,73 @@ def maybe_alert(db: Session, user: User, present, clocked_in: bool, break_left: 
     if open_alert:
         return
     minutes = max(1, int(away_seconds // 60))
-    db.add(
-        Alert(
-            user_id=user.id,
-            message=f"{user.name} has been away from the desk for {minutes} min.",
-            created_at=utc_now(),
-            seen=False,
+    message = f"{user.name} has been away from the desk for {minutes} min."
+    db.add(Alert(user_id=user.id, message=message, created_at=utc_now(), seen=False))
+    notify_hr_external(message)
+
+
+def maybe_identity_alert(db: Session, user: User, identity: dict):
+    """Ping HR when a different person is at this employee's desk."""
+    if identity.get("reason") != "mismatch":
+        return
+    # Cooldown: one unread identity alert at a time
+    recent = (
+        db.query(Alert)
+        .filter(
+            Alert.user_id == user.id,
+            Alert.seen.is_(False),
+            Alert.message.like("%Someone else%"),
         )
+        .first()
     )
+    if recent:
+        return
+    # Also suppress duplicates within 10 minutes even if acknowledged
+    cutoff = utc_now() - timedelta(minutes=10)
+    dup = (
+        db.query(Alert)
+        .filter(
+            Alert.user_id == user.id,
+            Alert.message.like("%Someone else%"),
+            Alert.created_at >= cutoff,
+        )
+        .first()
+    )
+    if dup:
+        return
+    score = identity.get("score")
+    message = (
+        f"Someone else may be at {user.name}'s desk "
+        f"(face mismatch, score={score})."
+    )
+    db.add(Alert(user_id=user.id, message=message, created_at=utc_now(), seen=False))
+    notify_hr_external(message)
+
+
+def notify_hr_external(message: str) -> None:
+    """Best-effort push when HR is not watching the website."""
+    import threading
+
+    webhook = getattr(config, "HR_ALERT_WEBHOOK", "") or ""
+    if not webhook:
+        return
+
+    def _post():
+        try:
+            import urllib.request
+
+            body = json.dumps({"text": f"DeskTrack: {message}"}).encode("utf-8")
+            req = urllib.request.Request(
+                webhook,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=8)
+        except Exception:
+            pass
+
+    threading.Thread(target=_post, daemon=True).start()
 
 
 @app.get("/health")
@@ -436,13 +496,51 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         frame = None
     if frame is None:
         return JSONResponse({"ok": False, "error": "bad image"}, status_code=400)
+
+    # Black / empty frame (camera busy or lid closed) — do not flip to Break
+    if float(np.mean(frame)) < 12.0:
+        last = (
+            db.query(Heartbeat)
+            .filter(Heartbeat.user_id == user.id)
+            .order_by(Heartbeat.id.desc())
+            .first()
+        )
+        app_name = str(payload.get("app") or "Browser")[:80]
+        window_title = str(payload.get("window_title") or "My desk")[:180]
+        device = str(payload.get("device") or "browser")[:20]
+        held_present = bool(last and last.present == 1)
+        db.add(
+            Heartbeat(
+                user_id=user.id,
+                present=int(held_present),
+                idle=False,
+                idle_seconds=0,
+                app=app_name,
+                window_title=window_title,
+                device=device,
+                created_at=utc_now(),
+            )
+        )
+        db.flush()
+        start, end = analytics.day_range()
+        summary = analytics.summarize(db, user.id, start, end)
+        db.commit()
+        return {
+            "ok": True,
+            "present": held_present,
+            "marks": [],
+            "identity": {"required": False, "matched": held_present, "score": 0.0, "reason": "dark_frame"},
+            "width": int(frame.shape[1]),
+            "height": int(frame.shape[0]),
+            "skipped": "dark_frame",
+        }
+
     net, yunet = get_detector()
     present, annotated, _score, marks = detector.annotate(frame, net, yunet)
     identity = {"required": False, "matched": True, "score": 0.0, "reason": "not_enrolled"}
     if face_id.has_enrollment(user.id):
         matched, score, reason = face_id.verify(user.id, frame, yunet, require_desk_zone=True)
         identity = {"required": True, "matched": matched, "score": round(score, 3), "reason": reason}
-        # Only this employee counts as present
         present = bool(matched)
         for m in marks:
             if m.get("at_desk"):
@@ -450,36 +548,54 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
         status = "Status: PRESENT (you)" if present else f"Status: ABSENT ({reason})"
         color = (0, 255, 0) if present else (0, 0, 255)
         cv2.putText(annotated, status, (12, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        maybe_identity_alert(db, user, identity)
     ok, buf = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
     if ok:
         PREVIEW_FRAMES[user.id] = buf.tobytes()
         PREVIEW_META[user.id] = {"blocked": False}
-    idle_seconds = int(payload.get("idle_seconds") or 0)
+
+    # Live frame means PC is awake — Idle KPI is sleep gaps, not mouse inactivity
     app_name = str(payload.get("app") or "Browser")[:80]
     window_title = str(payload.get("window_title") or "My desk")[:180]
     device = str(payload.get("device") or "browser")[:20]
-    # Avoid double-counting when browser tab + Windows agent both ping
     last = (
         db.query(Heartbeat)
         .filter(Heartbeat.user_id == user.id)
         .order_by(Heartbeat.id.desc())
         .first()
     )
+    # Prefer keeping present if a bad no_face agent frame tries to overwrite a good match
+    if (
+        last is not None
+        and last.present == 1
+        and not present
+        and identity.get("reason") in {"no_face", "dark_frame", "hold"}
+        and (analytics.seconds_ago(last.created_at) or 999) < float(config.IDENTITY_HOLD_SECONDS)
+    ):
+        present = True
+        identity = {**identity, "matched": True, "reason": "hold"}
+
     if last is not None and (analytics.seconds_ago(last.created_at) or 999) < 1.6:
+        # Prefer agent apps over generic Browser when merging
+        if device == "laptop" or (app_name and app_name not in {"Browser", "DeskTrack Agent"}):
+            last.app = app_name
+            last.window_title = window_title
+            last.device = device
+        elif not last.app:
+            last.app = app_name
+            last.window_title = window_title
+            last.device = device
         last.present = int(bool(present))
-        last.idle = idle_seconds >= config.IDLE_AFTER_SECONDS
-        last.idle_seconds = idle_seconds
-        last.app = app_name
-        last.window_title = window_title
-        last.device = device
+        last.idle = False
+        last.idle_seconds = 0
         last.created_at = utc_now()
     else:
         db.add(
             Heartbeat(
                 user_id=user.id,
                 present=int(bool(present)),
-                idle=idle_seconds >= config.IDLE_AFTER_SECONDS,
-                idle_seconds=idle_seconds,
+                idle=False,
+                idle_seconds=0,
                 app=app_name,
                 window_title=window_title,
                 device=device,

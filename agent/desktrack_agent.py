@@ -268,6 +268,10 @@ def main() -> None:
             if not ok_enc:
                 time.sleep(interval)
                 continue
+            # Skip near-black frames (camera held by browser / lid closed)
+            if float(frame.mean()) < 12.0:
+                time.sleep(interval)
+                continue
             image_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
 
             try:

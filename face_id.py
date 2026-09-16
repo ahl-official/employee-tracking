@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+import config
 import detector
 
 FACE_DIR = Path(__file__).resolve().parent / "face_models"
@@ -14,6 +16,9 @@ SIZE = (112, 112)
 MATCH_THRESHOLD = 0.72  # cosine similarity; raise to be stricter
 MIN_ENROLL_SAMPLES = 5
 MAX_ENROLL_SAMPLES = 20
+
+# Per-user: last successful face match (unix time)
+_last_match_at: dict[int, float] = {}
 
 
 def _ensure_dir() -> None:
@@ -162,7 +167,8 @@ def enroll_from_frame(user_id: int, frame, yunet) -> dict:
 def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[bool, float, str]:
     """
     Return (matched, score, reason).
-    matched=True only when this user's enrolled face is seen (and optionally in desk zone).
+    matched=True only when this user's enrolled face is seen (and optionally in desk zone),
+    or briefly held after a good match so looking away does not flip to Break.
     """
     if not has_enrollment(user_id):
         return False, 0.0, "not_enrolled"
@@ -170,7 +176,12 @@ def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[
     data = np.load(model_path(user_id))
     embeds = data["embeds"]
     boxes = detector.detect_faces(yunet, frame)
+    hold = float(getattr(config, "IDENTITY_HOLD_SECONDS", 12))
+    now = time.time()
+
     if not boxes:
+        if now - _last_match_at.get(user_id, 0) < hold:
+            return True, 0.0, "hold"
         return False, 0.0, "no_face"
 
     height, width = frame.shape[:2]
@@ -198,8 +209,20 @@ def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[
                 best = score
                 best_in_zone = in_zone
 
-    if best < MATCH_THRESHOLD:
-        return False, best, "mismatch"
-    if require_desk_zone and not best_in_zone:
+    if best >= MATCH_THRESHOLD and (not require_desk_zone or best_in_zone):
+        _last_match_at[user_id] = now
+        return True, best, "matched"
+
+    if best >= MATCH_THRESHOLD and require_desk_zone and not best_in_zone:
+        if now - _last_match_at.get(user_id, 0) < hold:
+            return True, best, "hold"
         return False, best, "outside_zone"
-    return True, best, "matched"
+
+    # Face seen but not this employee
+    if best > 0.35 and boxes:
+        _last_match_at.pop(user_id, None)
+        return False, best, "mismatch"
+
+    if now - _last_match_at.get(user_id, 0) < hold:
+        return True, best, "hold"
+    return False, best, "mismatch"

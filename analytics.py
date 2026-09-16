@@ -102,13 +102,12 @@ def live_status(beat: Heartbeat | None, clocked_in=True, break_left=0, ignore_st
     )
     if not clocked_in:
         return "offline" if stale or beat is None else "clocked-out"
-    # Still clocked in but no pings (laptop sleep, closed lid, tab frozen) → inactive
+    # Still clocked in but no pings (laptop sleep, closed lid, tab frozen) → inactive (= Idle/sleep)
     if stale or beat is None:
         return "inactive"
     if beat.present == 0:
         return "break" if break_left > 0 else "away"
-    if beat.idle:
-        return "idle"
+    # Present at desk while PC is awake → always Active (ignore mouse-idle flag)
     return "present"
 
 
@@ -176,26 +175,30 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
     seated = active = idle = work = other = away = 0.0
     apps: dict[str, float] = {}
     cap = config.HEARTBEAT_SECONDS * 4
+    sleep_gap = float(getattr(config, "SLEEP_GAP_SECONDS", 45))
     for i, row in enumerate(rows):
         if i + 1 < len(rows):
-            delta = (as_dt(rows[i + 1].created_at) - as_dt(row.created_at)).total_seconds()
+            gap = (as_dt(rows[i + 1].created_at) - as_dt(row.created_at)).total_seconds()
         else:
-            delta = config.HEARTBEAT_SECONDS
-        delta = min(max(delta, 0), cap)
-        # Seated / active / idle only when at desk — Active + Idle = Seated
+            gap = float(config.HEARTBEAT_SECONDS)
+        # Long gap = laptop sleep / lid closed → Idle KPI (not "looking away")
+        if gap > sleep_gap:
+            idle += min(gap, 4 * 3600)
+            delta = float(config.HEARTBEAT_SECONDS)
+        else:
+            delta = min(max(gap, 0), cap)
+        raw_app = (row.app or "").strip() or "unknown"
+        key = app_key(raw_app)
+        # Always attribute apps from agent/browser samples (even brief away)
+        apps[key] = apps.get(key, 0) + delta
         if row.present == 1:
             seated += delta
-            raw_app = (row.app or "").strip() or "unknown"
-            key = app_key(raw_app)
-            apps[key] = apps.get(key, 0) + delta
-            if row.idle:
-                idle += delta
+            # While at desk and PC awake → Active (mouse idle no longer counts)
+            active += delta
+            if classify_app(raw_app, row.window_title) == "work":
+                work += delta
             else:
-                active += delta
-                if classify_app(raw_app, row.window_title) == "work":
-                    work += delta
-                else:
-                    other += delta
+                other += delta
         elif row.present == 0:
             away += delta
     all_apps = sorted(apps.items(), key=lambda item: item[1], reverse=True)

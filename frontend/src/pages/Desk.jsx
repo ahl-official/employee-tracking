@@ -130,6 +130,11 @@ export default function Desk() {
     if (!ok) return;
     meRef.current = data;
     setMe(data);
+    // Agent has the webcam — release browser camera so frames aren't black
+    if (data.agent_live && data.device === "laptop" && streamRef.current) {
+      stopCamera();
+      return;
+    }
     if (data.clocked_in && !streamRef.current && !camTried.current) {
       camTried.current = true;
       startCamera();
@@ -255,9 +260,13 @@ export default function Desk() {
     const t2 = setInterval(async () => {
       const video = videoRef.current;
       if (!streamRef.current || !meRef.current?.clocked_in || !video || video.readyState < 2) return;
+      // Agent owns the webcam — don't fight it (black frames → false Break)
+      if (meRef.current?.agent_live && meRef.current?.device === "laptop") {
+        drawOverlay(lastPresent.current);
+        return;
+      }
       const gap = Math.floor((Date.now() - lastPingAt.current) / 1000);
       if (gap > 30) {
-        // Laptop likely slept; keep idle clock honest for this ping.
         lastInput.current = Math.min(lastInput.current, Date.now() - gap * 1000);
       }
       const shot = document.createElement("canvas");
@@ -265,13 +274,12 @@ export default function Desk() {
       shot.height = video.videoHeight || 480;
       shot.getContext("2d").drawImage(video, 0, 0, shot.width, shot.height);
       const image = shot.toDataURL("image/jpeg", 0.55).split(",")[1];
-      const idle_seconds = Math.max(0, Math.floor((Date.now() - lastInput.current) / 1000));
       try {
         const { data } = await api("/api/me/track", {
           method: "POST",
           body: JSON.stringify({
             image,
-            idle_seconds,
+            idle_seconds: 0,
             app: detectBrowserApp(),
             window_title: document.title,
             device: detectDevice(),
@@ -316,7 +324,11 @@ export default function Desk() {
 
   let callout = "Clocked out. Click Clock in — the browser will ask to use your camera. Click Allow.";
   let calloutOk = false;
-  if (p?.clocked_in && camOn) {
+  if (p?.agent_live && p?.device === "laptop") {
+    callout =
+      "Windows agent is tracking (apps + face). You can close the camera on this tab — keep the agent running in the background.";
+    calloutOk = true;
+  } else if (p?.clocked_in && camOn) {
     callout = "Camera is on. Keep this tab open while you work. Clock out to turn it off. Video is not saved.";
     calloutOk = true;
   } else if (p?.clocked_in) {
@@ -384,7 +396,7 @@ export default function Desk() {
           <strong>{today.break_left || "30m"}</strong>
         </div>
         <div className="kpi">
-          <span>Idle</span>
+          <span>Idle (sleep)</span>
           <strong>{today.idle || "—"}</strong>
         </div>
       </div>
