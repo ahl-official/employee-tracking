@@ -463,7 +463,9 @@ export default function Desk() {
           <strong>{today.seated || "—"}</strong>
         </div>
         <div className="kpi">
-          <span>Active</span>
+          <span title="Total time apps were in use (sum of Apps today, except lock screen)">
+            Active (apps)
+          </span>
           <strong>{today.active || "—"}</strong>
         </div>
         <div className="kpi">

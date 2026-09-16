@@ -203,14 +203,13 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         raw_app = (row.app or "").strip() or "unknown"
         key = app_key(raw_app)
         locked = is_lock_screen(raw_app, row.window_title)
-        # Win+L / lock screen = away (uses break allowance), never seated/active
+        # Win+L / lock screen = away (uses break allowance), never seated
         if locked or row.present == 0:
             away += delta
             apps[key] = apps.get(key, 0) + delta
             return
         if row.present == 1:
             seated += delta
-            active += delta
             apps[key] = apps.get(key, 0) + delta
             if classify_app(raw_app, row.window_title) == "work":
                 work += delta
@@ -225,11 +224,16 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             gap = (min(now, end) - as_dt(row.created_at)).total_seconds()
             gap = max(gap, float(config.HEARTBEAT_SECONDS))
         if gap > sleep_gap:
-            # PC sleep / offline — Idle only; do not credit seated/apps across the nap
+            # PC sleep / offline — Idle (sleep) only; do not credit seated/apps across the nap
             idle += min(gap, 4 * 3600)
             credit(row, float(config.HEARTBEAT_SECONDS))
         else:
             credit(row, min(max(gap, 0), cap))
+
+    # Active = total time apps were in use (sum of Apps today, excluding lock screen)
+    active = sum(
+        sec for name, sec in apps.items() if not is_lock_screen(name)
+    )
 
     all_apps = sorted(apps.items(), key=lambda item: item[1], reverse=True)
     useful = (work / (work + other) * 100) if (work + other) else 0
