@@ -3,12 +3,13 @@ setlocal EnableExtensions
 title DeskTrack Agent Installer
 
 echo.
-echo  DeskTrack Agent — employee PC setup
+echo  DeskTrack Agent - employee PC setup
 echo  ===================================
 echo.
 
 set "INSTALL_DIR=%LOCALAPPDATA%\DeskTrackAgent"
 set "ZIP=%TEMP%\desktrack-agent.zip"
+set "SRC=%TEMP%\desktrack-src"
 set "REPO_ZIP=https://github.com/ahl-official/employee-tracking/archive/refs/heads/main.zip"
 
 where python >nul 2>&1
@@ -21,10 +22,11 @@ if errorlevel 1 (
 
 echo Installing to: %INSTALL_DIR%
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
+if exist "%SRC%" rmdir /s /q "%SRC%"
+if exist "%ZIP%" del /f /q "%ZIP%"
 
 echo Downloading agent from GitHub...
-powershell -NoProfile -Command ^
-  "try { Invoke-WebRequest -Uri '%REPO_ZIP%' -OutFile '%ZIP%' -UseBasicParsing } catch { exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%REPO_ZIP%' -OutFile '%ZIP%' -UseBasicParsing"
 if errorlevel 1 (
   echo Download failed. Check internet access.
   pause
@@ -32,9 +34,12 @@ if errorlevel 1 (
 )
 
 echo Extracting...
-powershell -NoProfile -Command ^
-  "Expand-Archive -Path '%ZIP%' -DestinationPath '%TEMP%\desktrack-src' -Force; ^
-   Copy-Item -Path '%TEMP%\desktrack-src\employee-tracking-main\agent\*' -Destination '%INSTALL_DIR%' -Recurse -Force"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path '%ZIP%' -DestinationPath '%SRC%' -Force; Copy-Item -Path '%SRC%\employee-tracking-main\agent\*' -Destination '%INSTALL_DIR%' -Recurse -Force"
+if errorlevel 1 (
+  echo Extract failed.
+  pause
+  exit /b 1
+)
 
 if not exist "%INSTALL_DIR%\desktrack_agent.py" (
   echo Could not find agent files after download.
@@ -74,19 +79,13 @@ if errorlevel 1 (
 
 echo.
 echo Creating desktop shortcut...
-powershell -NoProfile -Command ^
-  "$ws = New-Object -ComObject WScript.Shell; ^
-   $s = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\DeskTrack Agent.lnk'); ^
-   $s.TargetPath = 'python'; ^
-   $s.Arguments = '\"%INSTALL_DIR%\desktrack_agent.py\"'; ^
-   $s.WorkingDirectory = '%INSTALL_DIR%'; ^
-   $s.Save()"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'DeskTrack Agent.lnk')); $s.TargetPath = 'python'; $s.Arguments = '\"%INSTALL_DIR%\desktrack_agent.py\"'; $s.WorkingDirectory = '%INSTALL_DIR%'; $s.Save()"
 
 echo.
 echo Done.
 echo  1. Open https://desktrack.hairscalptradingco.com in Chrome
-echo  2. Log in - My desk - click "Enroll face" (allow camera)
-echo  3. Then start "DeskTrack Agent" from your Desktop
+echo  2. Log in - My desk - click Enroll face (allow camera)
+echo  3. Then start DeskTrack Agent from your Desktop
 echo.
 pause
 

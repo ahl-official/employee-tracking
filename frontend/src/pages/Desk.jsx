@@ -347,14 +347,15 @@ export default function Desk() {
         </p>
         {faceMsg ? <p className="hint">{faceMsg}</p> : null}
         <div className="actions">
-          <button type="button" onClick={enrollFaceOnce} disabled={enrolling}>
-            {enrolling ? "Enrolling…" : face.enrolled ? "Add more samples" : "Enroll face"}
-          </button>
-          {face.enrolled ? (
+          {!face.enrolled ? (
+            <button type="button" onClick={enrollFaceOnce} disabled={enrolling}>
+              {enrolling ? "Enrolling…" : "Enroll face"}
+            </button>
+          ) : (
             <button type="button" className="ghost" onClick={clearFace}>
               Clear face
             </button>
-          ) : null}
+          )}
         </div>
       </div>
       <div className="kpis">
