@@ -36,11 +36,37 @@ from models import Alert, Heartbeat, SessionLocal, User, WorkSession
 
 PREVIEW_FRAMES: dict[int, bytes] = {}
 PREVIEW_META: dict[int, dict] = {}
-# Latest desktop app from Windows agent (no camera) — merged into browser presence pings
-AGENT_FOREGROUND: dict[int, dict] = {}
 _DETECT_NET = None
 _DETECT_FACE = None
 _cleanup_stop = threading.Event()
+AGENT_FG_DIR = Path(__file__).resolve().parent / "face_models"
+
+
+def _agent_fg_path(user_id: int) -> Path:
+    AGENT_FG_DIR.mkdir(parents=True, exist_ok=True)
+    return AGENT_FG_DIR / f"agent_fg_{user_id}.json"
+
+
+def save_agent_foreground(user_id: int, app: str, title: str) -> None:
+    """File-backed so all Gunicorn/uvicorn workers see the same desktop app."""
+    payload = {"app": app, "title": title, "at": time.time()}
+    try:
+        _agent_fg_path(user_id).write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def load_agent_foreground(user_id: int, max_age: float = 90.0) -> dict:
+    path = _agent_fg_path(user_id)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if time.time() - float(data.get("at") or 0) > max_age:
+            return {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 def get_detector():
@@ -179,8 +205,8 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
             if beat
             else "offline"
         )
-    fg = AGENT_FOREGROUND.get(emp.id) or {}
-    agent_apps = bool(fg) and (time.time() - float(fg.get("at") or 0)) <= 30
+    fg = load_agent_foreground(emp.id)
+    agent_apps = bool(fg)
     # Prefer live desktop app from agent over stale heartbeat app label
     live_app = beat.app if beat else None
     live_title = beat.window_title if beat else None
@@ -530,25 +556,25 @@ def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depen
         return JSONResponse({"ok": False, "error": "clocked out"}, status_code=400)
     app_name = str(payload.get("app") or "Unknown")[:80]
     window_title = str(payload.get("window_title") or "")[:180]
-    AGENT_FOREGROUND[user.id] = {"app": app_name, "title": window_title, "at": time.time()}
+    save_agent_foreground(user.id, app_name, window_title)
     last = (
         db.query(Heartbeat)
         .filter(Heartbeat.user_id == user.id)
         .order_by(Heartbeat.id.desc())
         .first()
     )
-    if last is not None and (analytics.seconds_ago(last.created_at) or 999) < 12:
+    # Stamp the latest presence sample so Apps today accumulates under the real app
+    if last is not None and (analytics.seconds_ago(last.created_at) or 999) < 90:
         last.app = app_name
         last.window_title = window_title
-        if last.device in {None, "", "browser", "unknown"}:
-            last.device = "laptop"
+        last.device = "laptop"
         db.commit()
     return {"ok": True, "app": analytics.pretty_app_name(app_name)}
 
 
 def _resolve_app_fields(user_id: int, payload: dict) -> tuple[str, str, str]:
-    fg = AGENT_FOREGROUND.get(user_id) or {}
-    if fg and (time.time() - float(fg.get("at") or 0)) < 20:
+    fg = load_agent_foreground(user_id, max_age=90.0)
+    if fg.get("app"):
         return (
             str(fg.get("app") or "Unknown")[:80],
             str(fg.get("title") or "")[:180],

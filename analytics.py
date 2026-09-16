@@ -114,10 +114,14 @@ def live_status(beat: Heartbeat | None, clocked_in=True, break_left=0, ignore_st
 def fmt_hours(seconds: float) -> str:
     seconds = max(0, int(seconds))
     hours, rem = divmod(seconds, 3600)
-    minutes, _ = divmod(rem, 60)
+    minutes, secs = divmod(rem, 60)
     if hours:
         return f"{hours}h {minutes:02d}m"
-    return f"{minutes}m"
+    if minutes and secs:
+        return f"{minutes}m {secs:02d}s"
+    if minutes:
+        return f"{minutes}m"
+    return f"{secs}s"
 
 
 def open_session(db, user_id: int) -> WorkSession | None:
@@ -185,6 +189,7 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             return
         raw_app = (row.app or "").strip() or "unknown"
         key = app_key(raw_app)
+        # App time while PC is awake and employee is at desk (present)
         if row.present == 1:
             seated += delta
             active += delta
@@ -195,9 +200,6 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
                 other += delta
         elif row.present == 0:
             away += delta
-            # Away time does not count as app-use for "Apps today"
-        else:
-            apps[key] = apps.get(key, 0) + delta
 
     for i, row in enumerate(rows):
         if i + 1 < len(rows):
