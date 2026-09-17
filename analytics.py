@@ -203,6 +203,16 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             return
         raw_app = (row.app or "").strip() or "unknown"
         key = app_key(raw_app)
+        
+        # Breakdown browser usage by the actual website tab name
+        if key in {"chrome", "msedge", "firefox", "brave", "safari", "browser"}:
+            title = (row.window_title or "").strip()
+            if title and title.lower() != "my desk" and title.lower() != "new tab":
+                # Clean up trailing app names from titles like "YouTube - Google Chrome"
+                if " - " in title:
+                    title = title.rsplit(" - ", 1)[0]
+                key = f"{key} ({title[:35]})"
+                
         locked = is_lock_screen(raw_app, row.window_title)
         # Win+L / lock screen = away (uses break allowance), never seated
         if locked or row.present == 0:
