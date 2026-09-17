@@ -81,7 +81,7 @@ OFFLINE_AFTER_SECONDS = _int("OFFLINE_AFTER_SECONDS", 25)
 # Treat heartbeat gaps longer than this as laptop sleep (Idle KPI)
 SLEEP_GAP_SECONDS = _int("SLEEP_GAP_SECONDS", 45)
 # Keep "present" briefly if face briefly leaves frame / looks away
-IDENTITY_HOLD_SECONDS = _int("IDENTITY_HOLD_SECONDS", 12)
+IDENTITY_HOLD_SECONDS = _int("IDENTITY_HOLD_SECONDS", 450)
 # Delete heartbeats older than this (keeps SQLite small). Reports only need recent days.
 HEARTBEAT_KEEP_DAYS = _int("HEARTBEAT_KEEP_DAYS", 14)
 # Delete acknowledged alerts older than this
