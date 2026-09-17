@@ -132,6 +132,10 @@ WORK_APPS = {
     "msedge.exe",
     "firefox.exe",
     "figma.exe",
+    "antigravity ide.exe",
+    "antigravity.exe",
+    "whatsapp.exe",
+    "whatsapp.root.exe",
 }
 
 DISTRACTION_WORDS = (

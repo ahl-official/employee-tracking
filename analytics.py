@@ -67,12 +67,10 @@ def seconds_ago(value) -> float | None:
 def classify_app(app: str | None, title: str | None) -> str:
     app_k = app_key(app)
     title = (title or "").lower()
-    if any(word in title for word in config.DISTRACTION_WORDS):
+    search_string = f"{app_k} {title}"
+    if any(word in search_string for word in config.DISTRACTION_WORDS):
         return "other"
-    work_keys = {app_key(name) for name in config.WORK_APPS}
-    if app_k in work_keys:
-        return "work"
-    return "other"
+    return "work"
 
 
 def app_key(app: str | None) -> str:
