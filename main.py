@@ -31,7 +31,7 @@ import analytics
 import config
 import detector
 import face_id
-from database import init_db, purge_old_data, utc_now, _keep_demo_fresh
+from database import init_db, purge_old_data, utc_now
 from models import Alert, Heartbeat, SessionLocal, User, WorkSession
 
 PREVIEW_FRAMES: dict[int, bytes] = {}
@@ -788,8 +788,6 @@ def api_hr_preview(user_id: int, request: Request, db: Session = Depends(get_db)
 def api_team(request: Request, db: Session = Depends(get_db)):
     if not require(request, db, "hr"):
         return JSONResponse({"ok": False}, status_code=401)
-    if config.SEED_DEMO:
-        _keep_demo_fresh(db)
     employees = db.query(User).filter_by(role="employee").order_by(User.name).all()
     team = [employee_card(db, emp) for emp in employees]
     db.commit()
