@@ -15,8 +15,9 @@
   <table>
     <thead>
       <tr>
-        <th>Employee</th><th>Dept</th><th id="status-col">Now</th><th>Seated</th>
-        <th>Active</th><th>Idle</th><th>Break used</th><th>Work apps</th><th>Other</th><th title="Share of active time in work apps vs other apps">Useful apps</th>
+        <th>Employee</th><th>Dept</th><th id="status-col">Now</th>
+        <th>Active</th><th title="Share of active time in work apps vs other apps">Work apps %</th>
+        <th>Seated</th><th>Idle</th><th>Break used</th><th title="Seated / (Seated + Idle)">Presence %</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>
@@ -43,13 +44,12 @@ async function refresh() {
       <td><a href="/hr/employee/${p.id}">${esc(p.name)}</a></td>
       <td>${esc(p.department)}</td>
       <td>${badge(p.status)}</td>
-      <td>${esc(p.today.seated)}</td>
       <td>${esc(p.today.active)}</td>
+      <td>${p.today.useful_pct}%</td>
+      <td>${esc(p.today.seated)}</td>
       <td>${esc(p.today.idle)}</td>
       <td>${esc(p.today.break_used || "0m")}</td>
-      <td>${esc(p.today.work)}</td>
-      <td>${esc(p.today.other)}</td>
-      <td>${p.today.useful_pct}%</td>
+      <td>${p.today.seated_seconds + p.today.idle_seconds > 0 ? Math.round((p.today.seated_seconds / (p.today.seated_seconds + p.today.idle_seconds)) * 100) : 0}%</td>
     </tr>`).join("");
 }
 refresh();

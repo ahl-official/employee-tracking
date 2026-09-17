@@ -48,13 +48,12 @@ export default function Reports() {
               <th>Employee</th>
               <th>Dept</th>
               <th>{data?.is_today ? "Now" : "Last that day"}</th>
-              <th>Seated</th>
               <th>Active</th>
+              <th title="Share of active time in work apps vs other apps">Work apps %</th>
+              <th>Seated</th>
               <th>Idle</th>
               <th>Break used</th>
-              <th>Work apps</th>
-              <th>Other</th>
-              <th title="Share of active time in work apps vs other apps">Useful apps</th>
+              <th title="Seated / (Seated + Idle)">Presence %</th>
             </tr>
           </thead>
           <tbody>
@@ -67,13 +66,21 @@ export default function Reports() {
                 <td>
                   <Badge status={p.status} />
                 </td>
-                <td>{p.today.seated}</td>
                 <td>{p.today.active}</td>
+                <td>{p.today.useful_pct}%</td>
+                <td>{p.today.seated}</td>
                 <td>{p.today.idle}</td>
                 <td>{p.today.break_used || "0m"}</td>
-                <td>{p.today.work}</td>
-                <td>{p.today.other}</td>
-                <td>{p.today.useful_pct}%</td>
+                <td>
+                  {p.today.seated_seconds + p.today.idle_seconds > 0
+                    ? Math.round(
+                      (p.today.seated_seconds /
+                        (p.today.seated_seconds + p.today.idle_seconds)) *
+                      100
+                    )
+                    : 0}
+                  %
+                </td>
               </tr>
             ))}
           </tbody>

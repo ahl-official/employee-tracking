@@ -393,7 +393,7 @@ def api_signup(request: Request, payload: dict = Body(...), db: Session = Depend
     name = str(payload.get("name") or "").strip()
     username = str(payload.get("username") or "").strip().lower()
     password = str(payload.get("password") or "")
-    department = str(payload.get("department") or "Engineering").strip() or "Engineering"
+    department = str(payload.get("department") or "").strip()
     if len(name) < 2:
         return JSONResponse({"ok": False, "error": "Enter your full name."}, status_code=400)
     if len(username) < 3 or not username.replace("_", "").replace(".", "").isalnum():
@@ -938,7 +938,7 @@ def api_people_post(request: Request, payload: dict = Body(...), db: Session = D
         return JSONResponse({"ok": False}, status_code=401)
     username = str(payload.get("username") or "").strip().lower()
     name = str(payload.get("name") or "").strip()
-    department = str(payload.get("department") or "Engineering").strip() or "Engineering"
+    department = str(payload.get("department") or "").strip()
     password = str(payload.get("password") or "emp123")
     if not username or not name:
         return JSONResponse({"ok": False, "error": "Name and username are required."}, status_code=400)

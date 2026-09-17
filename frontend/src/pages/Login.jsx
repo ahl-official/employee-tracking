@@ -5,7 +5,7 @@ import { api } from "../api";
 const emptySignup = {
   name: "",
   username: "",
-  department: "Engineering",
+  department: "",
   password: "",
   confirm: "",
 };

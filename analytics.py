@@ -65,11 +65,12 @@ def seconds_ago(value) -> float | None:
 
 
 def classify_app(app: str | None, title: str | None) -> str:
-    app = (app or "").lower()
+    app_k = app_key(app)
     title = (title or "").lower()
     if any(word in title for word in config.DISTRACTION_WORDS):
         return "other"
-    if app in {name.lower() for name in config.WORK_APPS}:
+    work_keys = {app_key(name) for name in config.WORK_APPS}
+    if app_k in work_keys:
         return "work"
     return "other"
 
@@ -251,8 +252,11 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
     return {
         "samples": len(rows),
         "seated": fmt_hours(seated),
+        "seated_seconds": int(seated),
         "active": fmt_hours(active),
+        "active_seconds": int(active),
         "idle": fmt_hours(idle),
+        "idle_seconds": int(idle),
         "away": fmt_hours(away),
         "work": fmt_hours(work),
         "other": fmt_hours(other),

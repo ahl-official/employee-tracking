@@ -18,7 +18,7 @@ class User(Base):
     password: Mapped[str] = mapped_column(String(120))
     name: Mapped[str] = mapped_column(String(120))
     role: Mapped[str] = mapped_column(String(20))
-    department: Mapped[str] = mapped_column(String(80), default="Engineering")
+    department: Mapped[str] = mapped_column(String(80), default="")
     on_break: Mapped[bool] = mapped_column(Boolean, default=False)
 
     heartbeats: Mapped[list["Heartbeat"]] = relationship(back_populates="user")

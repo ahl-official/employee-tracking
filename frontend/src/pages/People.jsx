@@ -8,7 +8,7 @@ export default function People() {
   const [form, setForm] = useState({
     name: "",
     username: "",
-    department: "Engineering",
+    department: "",
     password: "emp123",
   });
 
@@ -32,7 +32,7 @@ export default function People() {
       setError(data.error || "Could not create that person.");
       return;
     }
-    setForm({ name: "", username: "", department: "Engineering", password: "emp123" });
+    setForm({ name: "", username: "", department: "", password: "emp123" });
     load();
   }
 
