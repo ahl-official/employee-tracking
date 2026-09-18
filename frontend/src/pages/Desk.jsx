@@ -218,9 +218,9 @@ export default function Desk() {
     if (!ok) return;
     meRef.current = data;
     setMe(data);
-    if (data.clocked_in && !streamRef.current && !camTried.current) {
+    if (data.clocked_in && !streamRef.current) {
       camTried.current = true;
-      startCamera();
+      startCamera(cameraIdRef.current);
     }
     if (!data.clocked_in && streamRef.current) stopCamera();
     if (!data.clocked_in) {
