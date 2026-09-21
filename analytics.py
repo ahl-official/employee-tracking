@@ -65,12 +65,13 @@ def seconds_ago(value) -> float | None:
 
 
 def classify_app(app: str | None, title: str | None) -> str:
-    app_k = app_key(app)
+    app = (app or "").lower()
     title = (title or "").lower()
-    search_string = f"{app_k} {title}"
-    if any(word in search_string for word in config.DISTRACTION_WORDS):
+    if any(word in title for word in config.DISTRACTION_WORDS):
         return "other"
-    return "work"
+    if app in {name.lower() for name in config.WORK_APPS}:
+        return "work"
+    return "other"
 
 
 def app_key(app: str | None) -> str:
@@ -201,16 +202,6 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             return
         raw_app = (row.app or "").strip() or "unknown"
         key = app_key(raw_app)
-        
-        # Breakdown browser usage by the actual website tab name
-        if key in {"chrome", "msedge", "firefox", "brave", "safari", "browser"}:
-            title = (row.window_title or "").strip()
-            if title and title.lower() != "my desk" and title.lower() != "new tab":
-                # Clean up trailing app names from titles like "YouTube - Google Chrome"
-                if " - " in title:
-                    title = title.rsplit(" - ", 1)[0]
-                key = f"{key} ({title[:35]})"
-                
         locked = is_lock_screen(raw_app, row.window_title)
         # Win+L / lock screen = away (uses break allowance), never seated
         if locked or row.present == 0:
@@ -260,11 +251,8 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
     return {
         "samples": len(rows),
         "seated": fmt_hours(seated),
-        "seated_seconds": int(seated),
         "active": fmt_hours(active),
-        "active_seconds": int(active),
         "idle": fmt_hours(idle),
-        "idle_seconds": int(idle),
         "away": fmt_hours(away),
         "work": fmt_hours(work),
         "other": fmt_hours(other),

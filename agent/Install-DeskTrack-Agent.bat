@@ -50,7 +50,8 @@ if not exist "%INSTALL_DIR%\desktrack_agent.py" (
 )
 
 echo.
-set "SERVER=https://desktrack.hairscalptradingco.com"
+set /p SERVER=Server URL [https://desktrack.hairscalptradingco.com]: 
+if "%SERVER%"=="" set "SERVER=https://desktrack.hairscalptradingco.com"
 set /p USERNAME=Your DeskTrack username: 
 set /p PASSWORD=Your DeskTrack password: 
 
