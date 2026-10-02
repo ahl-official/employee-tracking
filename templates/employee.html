@@ -204,8 +204,9 @@ async function refresh() {
     <div class="kpi"><span>Status</span><strong>${badge(p.status)}</strong></div>
     <div class="kpi"><span>Seated</span><strong>${esc(p.today.seated)}</strong></div>
     <div class="kpi"><span>Active</span><strong>${esc(p.today.active)}</strong></div>
+    <div class="kpi"><span>Idle</span><strong>${esc(p.today.idle)}</strong></div>
     <div class="kpi"><span>Break left</span><strong>${esc(p.today.break_left || "30m")}</strong></div>
-    <div class="kpi" title="Share of active time in work apps vs other apps"><span>Useful apps</span><strong>${p.today.useful_pct}%</strong></div>`;
+    <div class="kpi" title="Seated ÷ 9h workday"><span>Presence</span><strong>${p.today.presence_pct ?? 0}%</strong></div>`;
   const present = p.present === 1 ? "yes" : p.present === 0 ? "no" : "unknown";
   const seatClass = p.present === 1 ? "yes" : p.present === 0 ? "no" : "";
   document.getElementById("now").innerHTML = `

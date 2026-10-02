@@ -17,7 +17,7 @@
       <tr>
         <th>Employee</th><th>Dept</th><th id="status-col">Now</th>
         <th>Active</th><th title="Share of active time in work apps vs other apps">Work apps %</th>
-        <th>Seated</th><th>Idle</th><th>Break used</th><th title="Seated / (Seated + Idle)">Presence %</th>
+        <th>Seated</th><th title="Time the face was not seen during the workday">Idle</th><th>Break used</th><th title="Seated ÷ 9h workday">Presence %</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>
@@ -49,7 +49,7 @@ async function refresh() {
       <td>${esc(p.today.seated)}</td>
       <td>${esc(p.today.idle)}</td>
       <td>${esc(p.today.break_used || "0m")}</td>
-      <td>${p.today.seated_seconds + p.today.idle_seconds > 0 ? Math.round((p.today.seated_seconds / (p.today.seated_seconds + p.today.idle_seconds)) * 100) : 0}%</td>
+      <td>${p.today.presence_pct ?? 0}%</td>
     </tr>`).join("");
 }
 refresh();

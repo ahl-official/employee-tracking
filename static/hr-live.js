@@ -41,7 +41,7 @@ function fillCard(el, p) {
   app.textContent = p.app || "—";
   app.title = p.app || "";
   el.querySelector(".person-today").textContent =
-    `seated ${p.today.seated} · break ${p.today.break_left || "30m"}`;
+    `seated ${p.today.seated} · idle ${p.today.idle} · ${p.today.presence_pct ?? 0}%`;
   el.querySelector(".now-ago").textContent = ago(p.updated);
   el.querySelector(".person-feed-empty").textContent = emptyFeedText(p);
 }

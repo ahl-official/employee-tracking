@@ -137,7 +137,7 @@ export default function Live() {
               <div className="now-row">
                 <span>Today</span>
                 <b>
-                  seated {p.today.seated} · break {p.today.break_left || "30m"}
+                  seated {p.today.seated} · idle {p.today.idle} · {p.today.presence_pct ?? 0}%
                 </b>
               </div>
             </div>

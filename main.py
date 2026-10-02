@@ -1135,7 +1135,7 @@ def hr_export(request: Request, day: str | None = None, db: Session = Depends(ge
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
-        ["day", "name", "department", "status", "seated", "active", "idle", "break_used", "work_apps", "other_apps", "useful_pct"]
+        ["day", "name", "department", "status", "seated", "active", "idle", "break_used", "work_apps", "other_apps", "useful_pct", "presence_pct"]
     )
     for emp in employees:
         card = employee_card(db, emp, day=chosen)
@@ -1153,6 +1153,7 @@ def hr_export(request: Request, day: str | None = None, db: Session = Depends(ge
                 t["work"],
                 t["other"],
                 t["useful_pct"],
+                t.get("presence_pct", 0),
             ]
         )
     db.commit()

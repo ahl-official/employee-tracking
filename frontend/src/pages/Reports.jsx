@@ -51,9 +51,9 @@ export default function Reports() {
               <th>Active</th>
               <th title="Share of active time in work apps vs other apps">Work apps %</th>
               <th>Seated</th>
-              <th>Idle</th>
+              <th title="Time the face was not seen during the workday (away, sleep, offline). Seated + Idle = workday so far (9h after hours)">Idle</th>
               <th>Break used</th>
-              <th title="Seated / (Seated + Idle)">Presence %</th>
+              <th title="Seated ÷ 9h workday">Presence %</th>
             </tr>
           </thead>
           <tbody>
@@ -71,16 +71,7 @@ export default function Reports() {
                 <td>{p.today.seated}</td>
                 <td>{p.today.idle}</td>
                 <td>{p.today.break_used || "0m"}</td>
-                <td>
-                  {p.today.seated_seconds + p.today.idle_seconds > 0
-                    ? Math.round(
-                      (p.today.seated_seconds /
-                        (p.today.seated_seconds + p.today.idle_seconds)) *
-                      100
-                    )
-                    : 0}
-                  %
-                </td>
+                <td>{p.today.presence_pct ?? 0}%</td>
               </tr>
             ))}
           </tbody>

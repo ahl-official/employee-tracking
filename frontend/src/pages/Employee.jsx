@@ -83,7 +83,7 @@ export default function Employee() {
           </strong>
         </div>
         <div className="kpi">
-          <span>Seated</span>
+          <span title="Face visible at desk during the workday">Seated</span>
           <strong>{today.seated || "—"}</strong>
         </div>
         <div className="kpi">
@@ -91,12 +91,16 @@ export default function Employee() {
           <strong>{today.active || "—"}</strong>
         </div>
         <div className="kpi">
-          <span>Idle (sleep)</span>
+          <span title="Face not seen (away, lock, sleep, offline) during the workday. Seated + Idle fills the workday">Idle</span>
           <strong>{today.idle || "—"}</strong>
         </div>
         <div className="kpi">
           <span>Break used</span>
           <strong>{today.break_used || "0m"}</strong>
+        </div>
+        <div className="kpi">
+          <span title="Seated ÷ 9h workday">Presence %</span>
+          <strong>{today.presence_pct != null ? `${today.presence_pct}%` : "—"}</strong>
         </div>
       </div>
       <section className="monitor-card card">

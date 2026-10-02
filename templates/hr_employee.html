@@ -48,6 +48,8 @@ async function refresh() {
   document.getElementById("kpis").innerHTML = `
     <div class="kpi"><span>Status</span><strong>${badge(p.status)}</strong></div>
     <div class="kpi"><span>Seated</span><strong>${esc(p.today.seated)}</strong></div>
+    <div class="kpi"><span>Idle</span><strong>${esc(p.today.idle)}</strong></div>
+    <div class="kpi" title="Seated ÷ 9h workday"><span>Presence</span><strong>${p.today.presence_pct ?? 0}%</strong></div>
     <div class="kpi"><span>Work apps</span><strong>${esc(p.today.work)}</strong></div>
     <div class="kpi" title="Share of active time in work apps vs other apps (YouTube, Instagram, etc.)">
       <span>Useful apps</span><strong>${p.today.useful_pct}%</strong>
