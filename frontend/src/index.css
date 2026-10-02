@@ -125,7 +125,7 @@ a.back:hover { color: var(--ink); }
 }
 .auth-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 0.35rem;
   margin-bottom: 1rem;
   padding: 0.3rem;
@@ -234,6 +234,27 @@ button.full { width: 100%; }
 }
 .bar i { display: block; height: 100%; background: var(--accent); }
 .error { color: var(--away); }
+.ok { color: var(--present); }
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 25, 20, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 40;
+}
+.modal-card {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 0.8rem;
+}
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

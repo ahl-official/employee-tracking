@@ -68,10 +68,14 @@ export default function Layout({ user, onLogout, children }) {
             <NavLink to="/hr/reports">Daily report</NavLink>
             <NavLink to="/hr/alerts">HR pings</NavLink>
             <NavLink to="/hr/people">People</NavLink>
+            <NavLink to="/account">Account</NavLink>
             <a href="/hr/export.csv">Export CSV</a>
           </>
         ) : (
-          <NavLink to="/me">My desk</NavLink>
+          <>
+            <NavLink to="/me">My desk</NavLink>
+            <NavLink to="/account">Account</NavLink>
+          </>
         )}
         <div className="nav-foot">
           {facePhoto ? (

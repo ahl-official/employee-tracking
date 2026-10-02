@@ -10,12 +10,21 @@ const emptySignup = {
   confirm: "",
 };
 
+const emptyReset = {
+  username: "",
+  password: "",
+  newUsername: "",
+  newPassword: "",
+  confirm: "",
+};
+
 export default function Login({ onLogin }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [signup, setSignup] = useState(emptySignup);
+  const [reset, setReset] = useState(emptyReset);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -76,8 +85,44 @@ export default function Login({ onLogin }) {
     }
   }
 
+  async function submitReset(e) {
+    e.preventDefault();
+    setError("");
+    if (reset.newPassword && reset.newPassword !== reset.confirm) {
+      setError("New passwords do not match.");
+      return;
+    }
+    if (!reset.newUsername.trim() && !reset.newPassword) {
+      setError("Enter a new username and/or a new password.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api("/api/reset-credentials", {
+        method: "POST",
+        body: JSON.stringify({
+          username: reset.username,
+          password: reset.password,
+          new_username: reset.newUsername.trim(),
+          new_password: reset.newPassword,
+        }),
+      });
+      if (!res.ok) {
+        setError(res.data.error || "Could not reset credentials.");
+        return;
+      }
+      goHome(res.data.user);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function setField(field) {
     return (e) => setSignup((prev) => ({ ...prev, [field]: e.target.value }));
+  }
+
+  function setResetField(field) {
+    return (e) => setReset((prev) => ({ ...prev, [field]: e.target.value }));
   }
 
   return (
@@ -116,6 +161,15 @@ export default function Login({ onLogin }) {
           >
             Create account
           </button>
+          <button
+            type="button"
+            role="tab"
+            className={mode === "reset" ? "active" : ""}
+            aria-selected={mode === "reset"}
+            onClick={() => switchMode("reset")}
+          >
+            Reset
+          </button>
         </div>
 
         {mode === "login" ? (
@@ -145,13 +199,15 @@ export default function Login({ onLogin }) {
               {busy ? "Signing in…" : "Sign in"}
             </button>
             <p className="auth-switch">
-              New here?{" "}
-              <button type="button" className="linkish" onClick={() => switchMode("signup")}>
-                Create an employee account
+              Forgot credentials?{" "}
+              <button type="button" className="linkish" onClick={() => switchMode("reset")}>
+                Reset username or password
               </button>
+              {" · "}
+              or ask HR on People.
             </p>
           </form>
-        ) : (
+        ) : mode === "signup" ? (
           <form className="login" onSubmit={submitSignup}>
             <p className="auth-sub">Create an employee account. HR accounts are set up by your admin.</p>
             {error ? <p className="error">{error}</p> : null}
@@ -202,6 +258,72 @@ export default function Login({ onLogin }) {
               Already have an account?{" "}
               <button type="button" className="linkish" onClick={() => switchMode("login")}>
                 Sign in
+              </button>
+            </p>
+          </form>
+        ) : (
+          <form className="login" onSubmit={submitReset}>
+            <p className="auth-sub">
+              Enter your current login, then set a new username and/or password. If you forgot the current password,
+              ask HR to reset it under People.
+            </p>
+            {error ? <p className="error">{error}</p> : null}
+            <label>
+              Current username
+              <input
+                value={reset.username}
+                onChange={setResetField("username")}
+                autoComplete="username"
+                required
+              />
+            </label>
+            <label>
+              Current password
+              <input
+                type="password"
+                value={reset.password}
+                onChange={setResetField("password")}
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            <label>
+              New username <span className="muted">(optional)</span>
+              <input
+                value={reset.newUsername}
+                onChange={setResetField("newUsername")}
+                autoComplete="username"
+                placeholder="Leave blank to keep the same"
+              />
+            </label>
+            <label>
+              New password <span className="muted">(optional)</span>
+              <input
+                type="password"
+                value={reset.newPassword}
+                onChange={setResetField("newPassword")}
+                autoComplete="new-password"
+                minLength={6}
+                placeholder="Leave blank to keep the same"
+              />
+            </label>
+            <label>
+              Confirm new password
+              <input
+                type="password"
+                value={reset.confirm}
+                onChange={setResetField("confirm")}
+                autoComplete="new-password"
+                minLength={6}
+                disabled={!reset.newPassword}
+              />
+            </label>
+            <button type="submit" className="full" disabled={busy}>
+              {busy ? "Saving…" : "Save and sign in"}
+            </button>
+            <p className="auth-switch">
+              <button type="button" className="linkish" onClick={() => switchMode("login")}>
+                Back to sign in
               </button>
             </p>
           </form>

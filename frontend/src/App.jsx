@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { api } from "./api";
 import Layout from "./components/Layout";
+import Account from "./pages/Account";
 import Alerts from "./pages/Alerts";
 import Desk from "./pages/Desk";
 import Employee from "./pages/Employee";
@@ -43,11 +44,13 @@ export default function App() {
                   <Route path="/hr/alerts" element={<Alerts />} />
                   <Route path="/hr/people" element={<People />} />
                   <Route path="/hr/employee/:id" element={<Employee />} />
+                  <Route path="/account" element={<Account user={user} onUser={setUser} />} />
                   <Route path="*" element={<Navigate to="/hr" replace />} />
                 </Routes>
               ) : (
                 <Routes>
                   <Route path="/me" element={<Desk />} />
+                  <Route path="/account" element={<Account user={user} onUser={setUser} />} />
                   <Route path="*" element={<Navigate to="/me" replace />} />
                 </Routes>
               )}

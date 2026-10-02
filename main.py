@@ -128,6 +128,44 @@ def user_payload(user: User) -> dict:
     }
 
 
+def normalize_username(raw: str) -> tuple[str | None, str | None]:
+    username = str(raw or "").strip().lower()
+    if len(username) < 3 or not username.replace("_", "").replace(".", "").isalnum():
+        return None, "Username must be at least 3 characters (letters, numbers, . or _)."
+    return username, None
+
+
+def apply_credential_updates(
+    db: Session,
+    user: User,
+    *,
+    new_username: str | None = None,
+    new_password: str | None = None,
+    new_name: str | None = None,
+) -> str | None:
+    """Apply username/password/name changes. Returns an error message or None."""
+    from passwords import hash_password
+
+    if new_username is not None:
+        username, err = normalize_username(new_username)
+        if err:
+            return err
+        taken = db.query(User).filter(User.username == username, User.id != user.id).first()
+        if taken:
+            return "That username is already taken."
+        user.username = username
+    if new_password is not None:
+        if len(new_password) < 6:
+            return "Password must be at least 6 characters."
+        user.password = hash_password(new_password)
+    if new_name is not None:
+        name = str(new_name).strip()
+        if len(name) < 2:
+            return "Enter a full name."
+        user.name = name
+    return None
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -391,16 +429,13 @@ def api_signup(request: Request, payload: dict = Body(...), db: Session = Depend
     from passwords import hash_password
 
     name = str(payload.get("name") or "").strip()
-    username = str(payload.get("username") or "").strip().lower()
+    username, username_err = normalize_username(payload.get("username") or "")
     password = str(payload.get("password") or "")
     department = str(payload.get("department") or "").strip()
     if len(name) < 2:
         return JSONResponse({"ok": False, "error": "Enter your full name."}, status_code=400)
-    if len(username) < 3 or not username.replace("_", "").replace(".", "").isalnum():
-        return JSONResponse(
-            {"ok": False, "error": "Username must be at least 3 characters (letters, numbers, . or _)."},
-            status_code=400,
-        )
+    if username_err:
+        return JSONResponse({"ok": False, "error": username_err}, status_code=400)
     if len(password) < 6:
         return JSONResponse({"ok": False, "error": "Password must be at least 6 characters."}, status_code=400)
     if db.query(User).filter_by(username=username).first():
@@ -416,6 +451,71 @@ def api_signup(request: Request, payload: dict = Body(...), db: Session = Depend
     db.commit()
     db.refresh(user)
     request.session["user_id"] = user.id
+    return {"ok": True, "user": user_payload(user)}
+
+
+@app.post("/api/reset-credentials")
+def api_reset_credentials(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Change username and/or password using the current password (no email recovery)."""
+    from passwords import verify_password
+
+    current_username = str(payload.get("username") or "").strip().lower()
+    current_password = str(payload.get("password") or "")
+    new_username = str(payload.get("new_username") or "").strip()
+    new_password = str(payload.get("new_password") or "")
+    user = db.query(User).filter_by(username=current_username).first()
+    if not user or not verify_password(current_password, user.password):
+        return JSONResponse({"ok": False, "error": "Wrong username or password."}, status_code=401)
+    if not new_username and not new_password:
+        return JSONResponse(
+            {"ok": False, "error": "Enter a new username and/or a new password."},
+            status_code=400,
+        )
+    err = apply_credential_updates(
+        db,
+        user,
+        new_username=new_username or None,
+        new_password=new_password or None,
+    )
+    if err:
+        status = 409 if "taken" in err else 400
+        return JSONResponse({"ok": False, "error": err}, status_code=status)
+    db.commit()
+    db.refresh(user)
+    request.session["user_id"] = user.id
+    return {"ok": True, "user": user_payload(user)}
+
+
+@app.post("/api/me/account")
+def api_me_account(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Logged-in user updates name, username, and/or password."""
+    from passwords import verify_password
+
+    user = current_user(request, db)
+    if not user:
+        return JSONResponse({"ok": False}, status_code=401)
+    current_password = str(payload.get("password") or "")
+    if not verify_password(current_password, user.password):
+        return JSONResponse({"ok": False, "error": "Current password is wrong."}, status_code=401)
+    new_username = str(payload.get("new_username") or "").strip()
+    new_password = str(payload.get("new_password") or "")
+    new_name = payload.get("name")
+    if new_username == user.username:
+        new_username = ""
+    if not new_username and not new_password and new_name is None:
+        return JSONResponse({"ok": False, "error": "Nothing to update."}, status_code=400)
+    err = apply_credential_updates(
+        db,
+        user,
+        new_username=new_username or None,
+        new_password=new_password or None,
+        new_name=None if new_name is None else str(new_name),
+    )
+    if err:
+        status = 409 if "taken" in err else 400
+        return JSONResponse({"ok": False, "error": err}, status_code=status)
+    db.commit()
+    db.refresh(user)
     return {"ok": True, "user": user_payload(user)}
 
 
@@ -934,12 +1034,16 @@ def api_people_post(request: Request, payload: dict = Body(...), db: Session = D
 
     if not require(request, db, "hr"):
         return JSONResponse({"ok": False}, status_code=401)
-    username = str(payload.get("username") or "").strip().lower()
+    username, username_err = normalize_username(payload.get("username") or "")
     name = str(payload.get("name") or "").strip()
     department = str(payload.get("department") or "").strip()
     password = str(payload.get("password") or "emp123")
     if not username or not name:
         return JSONResponse({"ok": False, "error": "Name and username are required."}, status_code=400)
+    if username_err:
+        return JSONResponse({"ok": False, "error": username_err}, status_code=400)
+    if len(password) < 6:
+        return JSONResponse({"ok": False, "error": "Password must be at least 6 characters."}, status_code=400)
     if db.query(User).filter_by(username=username).first():
         return JSONResponse({"ok": False, "error": "That username is already taken."}, status_code=409)
     db.add(
@@ -953,6 +1057,39 @@ def api_people_post(request: Request, payload: dict = Body(...), db: Session = D
     )
     db.commit()
     return {"ok": True}
+
+
+@app.post("/api/people/{user_id}/reset")
+def api_people_reset(user_id: int, request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """HR sets a new username and/or password for an employee (no old password needed)."""
+    if not require(request, db, "hr"):
+        return JSONResponse({"ok": False}, status_code=401)
+    user = db.get(User, user_id)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Person not found."}, status_code=404)
+    if user.role == "hr" and user.id != request.session.get("user_id"):
+        return JSONResponse({"ok": False, "error": "Cannot reset another HR account here."}, status_code=403)
+    new_username = str(payload.get("username") or "").strip()
+    new_password = str(payload.get("password") or "")
+    if not new_username and not new_password:
+        return JSONResponse(
+            {"ok": False, "error": "Enter a new username and/or a new password."},
+            status_code=400,
+        )
+    if new_username == user.username:
+        new_username = ""
+    err = apply_credential_updates(
+        db,
+        user,
+        new_username=new_username or None,
+        new_password=new_password or None,
+    )
+    if err:
+        status = 409 if "taken" in err else 400
+        return JSONResponse({"ok": False, "error": err}, status_code=status)
+    db.commit()
+    db.refresh(user)
+    return {"ok": True, "user": user_payload(user)}
 
 
 @app.post("/api/alerts/{alert_id}/seen")
