@@ -178,32 +178,50 @@ def auto_clock_in_if_needed(db, user_id: int) -> bool:
     return True
 
 
-def workday_window(day_start: datetime, day_end: datetime, now: datetime | None = None):
-    """
-    9h work window for the calendar day of day_start (local TZ), starting at WORK_START_HOUR.
-    Returns (window_start_utc, window_end_capped_utc, full_workday_seconds).
-    Cap end at `now` so mid-day Seated+Idle = elapsed work so far; after hours = full 9h.
-    """
+def session_intervals(
+    db,
+    user_id: int,
+    day_start: datetime,
+    day_end: datetime,
+    now: datetime | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Clock-in → clock-out ranges for this day (open session capped at now)."""
     now = now or datetime.now(timezone.utc)
-    local_day = as_dt(day_start).astimezone(config.TIMEZONE).date()
-    full = float(getattr(config, "WORKDAY_SECONDS", 9 * 3600))
-    ws_local = datetime(
-        local_day.year,
-        local_day.month,
-        local_day.day,
-        int(config.WORK_START_HOUR),
-        0,
-        0,
-        tzinfo=config.TIMEZONE,
+    rows = (
+        db.query(WorkSession)
+        .filter(
+            WorkSession.user_id == user_id,
+            WorkSession.clock_in < day_end,
+        )
+        .order_by(WorkSession.clock_in)
+        .all()
     )
-    we_local = ws_local + timedelta(seconds=full)
-    ws = ws_local.astimezone(timezone.utc)
-    we = we_local.astimezone(timezone.utc)
-    # Only count through "now" on the live day; past days use the full window
-    if now < ws:
-        return ws, ws, full
-    cap = min(we, max(ws, min(now, as_dt(day_end) or we)))
-    return ws, cap, full
+    intervals: list[tuple[datetime, datetime]] = []
+    for row in rows:
+        cin = as_dt(row.clock_in)
+        if cin is None:
+            continue
+        cout = as_dt(row.clock_out) if row.clock_out is not None else min(now, day_end)
+        # Session must overlap this calendar day
+        a = max(cin, day_start)
+        b = min(cout, day_end)
+        if b > a:
+            intervals.append((a, b))
+    return intervals
+
+
+def overlap_intervals(t0: datetime, t1: datetime, intervals: list[tuple[datetime, datetime]]) -> float:
+    """Seconds of [t0, t1) that fall inside any session interval."""
+    t0, t1 = as_dt(t0), as_dt(t1)
+    if t0 is None or t1 is None or t1 <= t0 or not intervals:
+        return 0.0
+    total = 0.0
+    for a, b in intervals:
+        lo = max(t0, a)
+        hi = min(t1, b)
+        if hi > lo:
+            total += (hi - lo).total_seconds()
+    return total
 
 
 def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
@@ -220,39 +238,50 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
     seated = work = other = away = 0.0
     apps: dict[str, float] = {}
     sleep_gap = float(getattr(config, "SLEEP_GAP_SECONDS", 45))
-    # Cap awake segments just under sleep threshold so seated/apps accumulate
     cap = sleep_gap
     now = datetime.now(timezone.utc)
-    ws, we_cap, workday_full = workday_window(start, end, now)
-    elapsed = max(0.0, (we_cap - ws).total_seconds())
-    seated_w = 0.0  # face visible inside work window
-
-    def overlap_window(t0: datetime, t1: datetime) -> float:
-        a = max(as_dt(t0), ws)
-        b = min(as_dt(t1), we_cap)
-        return max(0.0, (b - a).total_seconds())
+    workday_full = float(getattr(config, "WORKDAY_SECONDS", 9 * 3600))
+    intervals = session_intervals(db, user_id, start, end, now)
+    elapsed = sum((b - a).total_seconds() for a, b in intervals)
+    # Cap reported clocked time at one workday for presence math
+    elapsed_capped = min(elapsed, workday_full)
 
     def credit(row, delta: float, t0: datetime, t1: datetime) -> None:
-        nonlocal seated, work, other, away, seated_w
+        """Only count time that overlaps a clocked-in session."""
+        nonlocal seated, work, other, away
         if delta <= 0:
+            return
+        in_session = overlap_intervals(t0, t1, intervals)
+        if in_session <= 0:
+            return
+        # Scale if the credited delta was capped shorter than [t0,t1]
+        span = max((as_dt(t1) - as_dt(t0)).total_seconds(), 1e-6)
+        scale = min(1.0, delta / span)
+        use = in_session * scale
+        if use <= 0:
             return
         raw_app = (row.app or "").strip() or "unknown"
         key = app_key(raw_app)
         locked = is_lock_screen(raw_app, row.window_title)
-        win = overlap_window(t0, t1)
-        # Win+L / lock screen / no face = away (break), never seated
+        # Explicit no-face / lock = away (break). Unknown present = idle only (via elapsed - seated).
         if locked or row.present == 0:
-            away += delta
-            apps[key] = apps.get(key, 0) + delta
+            away += use
+            apps[key] = apps.get(key, 0) + use
             return
         if row.present == 1:
-            seated += delta
-            seated_w += win
-            apps[key] = apps.get(key, 0) + delta
+            seated += use
+            apps[key] = apps.get(key, 0) + use
             if classify_app(raw_app, row.window_title) == "work":
-                work += delta
+                work += use
             else:
-                other += delta
+                other += use
+            return
+        # present is None / unknown — still count app time while clocked in
+        apps[key] = apps.get(key, 0) + use
+        if classify_app(raw_app, row.window_title) == "work":
+            work += use
+        else:
+            other += use
 
     for i, row in enumerate(rows):
         t0 = as_dt(row.created_at)
@@ -260,43 +289,36 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             t1 = as_dt(rows[i + 1].created_at)
             gap = (t1 - t0).total_seconds()
         else:
-            # Live tail until now (or day end) so counters move while you work
+            # Live tail while still clocked in
             t1 = min(now, end)
-            gap = (t1 - t0).total_seconds()
-            gap = max(gap, float(config.HEARTBEAT_SECONDS))
+            gap = max((t1 - t0).total_seconds(), float(config.HEARTBEAT_SECONDS))
             t1 = t0 + timedelta(seconds=gap)
         if gap > sleep_gap:
-            # Long gap: no camera signal → cannot see face (idle in work window).
-            # Only a short beat is credited for the last known state.
+            # Long gap while clocked in: cannot see face → idle via (elapsed - seated).
+            # Only a short beat keeps last known app/away state.
             beat = float(config.HEARTBEAT_SECONDS)
-            raw_app = (row.app or "").strip()
-            if is_lock_screen(raw_app, row.window_title) or row.present == 0:
-                away += min(gap, 4 * 3600)
             credit(row, beat, t0, t0 + timedelta(seconds=beat))
         else:
             credit(row, min(max(gap, 0), cap), t0, t1)
 
-    # Active = total time apps were in use (sum of Apps today, excluding lock screen)
-    active = sum(
-        sec for name, sec in apps.items() if not is_lock_screen(name)
-    )
-
+    active = sum(sec for name, sec in apps.items() if not is_lock_screen(name))
     all_apps = sorted(apps.items(), key=lambda item: item[1], reverse=True)
     useful = (work / (work + other) * 100) if (work + other) else 0
     allowance = config.BREAK_ALLOWANCE_SECONDS
     break_used = min(away, allowance)
     break_left = max(0.0, allowance - away)
 
-    # Seated = face visible in the work window.
-    # Idle = rest of that window where the face was NOT seen (away, sleep, offline, no signal).
-    # After work hours: Seated + Idle = full 9h. Mid-day: = elapsed since work start.
-    if len(rows) == 0 or elapsed <= 0:
+    # Seated = face visible while clocked in.
+    # Idle = clocked-in time with no face (away, sleep, offline, shutter).
+    # Seated + Idle = time from clock-in to clock-out (capped at 9h).
+    if elapsed_capped <= 0:
         seated_s = 0.0
         idle_s = 0.0
         presence = 0
     else:
-        seated_s = min(float(seated_w), elapsed, workday_full)
-        idle_s = max(0.0, elapsed - seated_s)
+        seated_s = min(float(seated), elapsed_capped)
+        idle_s = max(0.0, elapsed_capped - seated_s)
+        # Presence vs expected 9h day; also equals seated/(seated+idle) when fully clocked 9h
         presence = int(round(100.0 * seated_s / workday_full)) if workday_full > 0 else 0
 
     return {
@@ -310,6 +332,7 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         "useful_pct": round(useful),
         "presence_pct": presence,
         "workday_seconds": int(workday_full),
+        "clocked_seconds": int(elapsed_capped),
         "seated_seconds": int(seated_s),
         "idle_seconds": int(idle_s),
         "break_used": fmt_hours(break_used),

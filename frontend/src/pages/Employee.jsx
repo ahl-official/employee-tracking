@@ -83,7 +83,7 @@ export default function Employee() {
           </strong>
         </div>
         <div className="kpi">
-          <span title="Face visible at desk during the workday">Seated</span>
+          <span title="Face visible while clocked in">Seated</span>
           <strong>{today.seated || "—"}</strong>
         </div>
         <div className="kpi">
@@ -91,7 +91,7 @@ export default function Employee() {
           <strong>{today.active || "—"}</strong>
         </div>
         <div className="kpi">
-          <span title="Face not seen (away, lock, sleep, offline) during the workday. Seated + Idle fills the workday">Idle</span>
+          <span title="No face while clocked in. Seated + Idle = clock-in → clock-out">Idle</span>
           <strong>{today.idle || "—"}</strong>
         </div>
         <div className="kpi">

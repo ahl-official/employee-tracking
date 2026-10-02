@@ -311,6 +311,14 @@ export default function Desk() {
       stopCamera();
       return;
     }
+    // Apply timer snapshot from clock-in immediately (don't wait for next poll)
+    if (data.today) {
+      setMe((prev) =>
+        prev
+          ? { ...prev, clocked_in: true, today: { ...prev.today, ...data.today } }
+          : prev
+      );
+    }
     await refresh();
   }
 
@@ -459,11 +467,11 @@ export default function Desk() {
           </strong>
         </div>
         <div className="kpi">
-          <span title="Face visible at desk during the workday">Seated</span>
+          <span title="Face visible while clocked in">Seated</span>
           <strong>{today.seated || "—"}</strong>
         </div>
         <div className="kpi">
-          <span title="Total time apps were in use (sum of Apps today, except lock screen)">
+          <span title="Total time apps were in use while clocked in (except lock screen)">
             Active (apps)
           </span>
           <strong>{today.active || "—"}</strong>
@@ -473,7 +481,7 @@ export default function Desk() {
           <strong>{today.break_left || "30m"}</strong>
         </div>
         <div className="kpi">
-          <span title="Face not seen (away, lock, sleep, offline) during the workday. Seated + Idle fills the workday">Idle</span>
+          <span title="No face while clocked in. Seated + Idle = clock-in → clock-out">Idle</span>
           <strong>{today.idle || "—"}</strong>
         </div>
         <div className="kpi">

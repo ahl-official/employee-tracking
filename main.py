@@ -534,9 +534,12 @@ def api_heartbeat(payload: dict = Body(...), db: Session = Depends(get_db)):
     user = db.query(User).filter_by(username=username).first()
     if not user:
         return JSONResponse({"ok": False, "error": "unknown employee"}, status_code=404)
+    analytics.close_overnight_sessions(db, user.id)
+    # Timers only run while explicitly clocked in (Clock in button / agent ensure_clocked_in)
+    if analytics.open_session(db, user.id) is None:
+        return JSONResponse({"ok": False, "error": "clocked out"}, status_code=400)
     present = payload.get("present")
     present_int = None if present is None else int(bool(present))
-    clocked_in = analytics.auto_clock_in_if_needed(db, user.id)
     db.add(
         Heartbeat(
             user_id=user.id,
@@ -556,11 +559,11 @@ def api_heartbeat(payload: dict = Body(...), db: Session = Depends(get_db)):
         db,
         user,
         present if present is None else bool(present),
-        clocked_in,
+        True,
         summary["break_left_seconds"],
     )
     db.commit()
-    return {"ok": True, "clocked_in": clocked_in}
+    return {"ok": True, "clocked_in": True, "today": summary}
 
 
 @app.post("/api/preview")
@@ -984,14 +987,31 @@ def api_clock(request: Request, payload: dict = Body(...), db: Session = Depends
     analytics.close_overnight_sessions(db, user.id)
     open_row = analytics.open_session(db, user.id)
     if payload.get("action") == "in" and open_row is None:
-        db.add(WorkSession(user_id=user.id, clock_in=utc_now()))
+        now = utc_now()
+        db.add(WorkSession(user_id=user.id, clock_in=now))
+        # Seed a beat at clock-in so Idle/Seated start moving immediately (before first camera frame)
+        app_name, window_title, device = _resolve_app_fields(user.id, {})
+        db.add(
+            Heartbeat(
+                user_id=user.id,
+                present=None,
+                idle=False,
+                idle_seconds=0,
+                app=app_name,
+                window_title=window_title,
+                device=device,
+                created_at=now,
+            )
+        )
     elif payload.get("action") == "out" and open_row is not None:
         open_row.clock_out = utc_now()
         PREVIEW_FRAMES.pop(user.id, None)
         PREVIEW_META.pop(user.id, None)
     db.commit()
     clocked_in = analytics.open_session(db, user.id) is not None
-    return {"ok": True, "clocked_in": clocked_in}
+    start, end = analytics.day_range()
+    summary = analytics.summarize(db, user.id, start, end)
+    return {"ok": True, "clocked_in": clocked_in, "today": summary}
 
 
 @app.get("/api/agent/state")

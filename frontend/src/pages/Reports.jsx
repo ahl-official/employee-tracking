@@ -50,8 +50,8 @@ export default function Reports() {
               <th>{data?.is_today ? "Now" : "Last that day"}</th>
               <th>Active</th>
               <th title="Share of active time in work apps vs other apps">Work apps %</th>
-              <th>Seated</th>
-              <th title="Time the face was not seen during the workday (away, sleep, offline). Seated + Idle = workday so far (9h after hours)">Idle</th>
+              <th title="Face visible while clocked in">Seated</th>
+              <th title="No face while clocked in (away / sleep / offline). Seated + Idle = clock-in → clock-out">Idle</th>
               <th>Break used</th>
               <th title="Seated ÷ 9h workday">Presence %</th>
             </tr>
