@@ -106,6 +106,78 @@ def pretty_app_name(app: str | None) -> str:
     return cleaned.title() if cleaned else "Unknown"
 
 
+_BROWSER_KEYS = {
+    "chrome",
+    "msedge",
+    "edge",
+    "firefox",
+    "brave",
+    "opera",
+    "chromium",
+    "browser",
+    "iexplore",
+}
+
+_BROWSER_TITLE_SUFFIXES = (
+    " - Google Chrome",
+    " - Chrome",
+    " - Microsoft​ Edge",
+    " - Microsoft Edge",
+    " - Edge",
+    " - Mozilla Firefox",
+    " - Firefox",
+    " - Brave",
+    " - Opera",
+    " — Mozilla Firefox",
+)
+
+
+def clean_window_title(title: str | None) -> str:
+    text = (title or "").strip()
+    if not text:
+        return ""
+    for suffix in _BROWSER_TITLE_SUFFIXES:
+        if text.endswith(suffix):
+            text = text[: -len(suffix)].strip()
+            break
+    return text[:120]
+
+
+def activity_bucket(app: str | None, title: str | None) -> tuple[str, str]:
+    """
+    Bucket key + display label for Apps today.
+    Browsers are split by tab title so Figma/YouTube/etc. show separately from bare Chrome.
+    """
+    key = app_key(app)
+    cleaned = clean_window_title(title)
+    low_title = cleaned.lower()
+    low_key = key.lower()
+
+    # Desktop Figma (and similar) — process name variants
+    if "figma" in low_key:
+        return "app:figma", "Figma"
+
+    # Browser tab → show the page/file name (and name known web apps)
+    if key in _BROWSER_KEYS:
+        if "figma" in low_title:
+            return "web:figma", "Figma (browser)"
+        if any(w in low_title for w in ("youtube", "youtu.be")):
+            return "web:youtube", "YouTube"
+        if "instagram" in low_title:
+            return "web:instagram", "Instagram"
+        if cleaned:
+            return f"tab:{low_title[:100]}", cleaned[:80]
+        return f"app:{key}", pretty_app_name(app)
+
+    # Store / UWP host — prefer window title when we have one
+    if key in {"applicationframehost", "wwahost", "textinputhost"} and cleaned:
+        if "figma" in low_title:
+            return "app:figma", "Figma"
+        return f"uwp:{low_title[:100]}", cleaned[:80]
+
+    return f"app:{key}", pretty_app_name(app)
+
+
 def live_status(beat: Heartbeat | None, clocked_in=True, break_left=0, ignore_stale=False) -> str:
     stale = (
         not ignore_stale
@@ -239,6 +311,7 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
     )
     seated = work = other = away = 0.0
     apps: dict[str, float] = {}
+    app_labels: dict[str, str] = {}
     sleep_gap = float(getattr(config, "SLEEP_GAP_SECONDS", 45))
     cap = sleep_gap
     now = datetime.now(timezone.utc)
@@ -263,14 +336,15 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         if use <= 0:
             return
         raw_app = (row.app or "").strip() or "unknown"
-        key = app_key(raw_app)
         locked = is_lock_screen(raw_app, row.window_title)
 
         def add_app_bucket(seconds: float) -> None:
             nonlocal work, other
             if seconds <= 0 or locked:
                 return
-            apps[key] = apps.get(key, 0) + seconds
+            bkey, label = activity_bucket(raw_app, row.window_title)
+            apps[bkey] = apps.get(bkey, 0) + seconds
+            app_labels[bkey] = label
             if classify_app(raw_app, row.window_title) == "work":
                 work += seconds
             else:
@@ -312,7 +386,7 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         else:
             credit(row, min(max(gap, 0), cap), t0, t1)
 
-    active = sum(sec for name, sec in apps.items() if not is_lock_screen(name))
+    active = sum(apps.values())
     all_apps = sorted(apps.items(), key=lambda item: item[1], reverse=True)
     useful = (work / (work + other) * 100) if (work + other) else 0
     allowance = config.BREAK_ALLOWANCE_SECONDS
@@ -351,7 +425,11 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         "break_left_seconds": int(break_left),
         "away_seconds": int(away),
         "apps": [
-            {"app": pretty_app_name(name), "seconds": sec, "label": fmt_hours(sec)}
+            {
+                "app": app_labels.get(name, pretty_app_name(name)),
+                "seconds": sec,
+                "label": fmt_hours(sec),
+            }
             for name, sec in all_apps
             if sec >= 1
         ],
