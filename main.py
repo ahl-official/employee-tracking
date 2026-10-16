@@ -696,10 +696,27 @@ def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depen
         db.commit()
         return {"ok": True, "app": "Lock screen", "locked": True}
 
-    if last is not None and (analytics.seconds_ago(last.created_at) or 999) < 90:
+    ago = analytics.seconds_ago(last.created_at) if last is not None else 999.0
+    if last is not None and ago < 90:
+        # Merge into recent browser/face heartbeat
         last.app = app_name
         last.window_title = window_title
         last.device = "laptop"
+        db.commit()
+    else:
+        # Browser tab throttled/closed — still record desktop apps (no face claim)
+        db.add(
+            Heartbeat(
+                user_id=user.id,
+                present=None,
+                idle=False,
+                idle_seconds=0,
+                app=app_name,
+                window_title=window_title,
+                device="laptop",
+                created_at=utc_now(),
+            )
+        )
         db.commit()
     return {"ok": True, "app": analytics.pretty_app_name(app_name), "locked": False}
 

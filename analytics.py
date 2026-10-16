@@ -65,11 +65,13 @@ def seconds_ago(value) -> float | None:
 
 
 def classify_app(app: str | None, title: str | None) -> str:
-    app = (app or "").lower()
     title = (title or "").lower()
     if any(word in title for word in config.DISTRACTION_WORDS):
         return "other"
-    if app in {name.lower() for name in config.WORK_APPS}:
+    # Agent sends "chrome"; WORK_APPS may list "chrome.exe" — compare stems
+    key = app_key(app)
+    work_keys = {app_key(name) for name in config.WORK_APPS}
+    if key in work_keys:
         return "work"
     return "other"
 
@@ -263,25 +265,30 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         raw_app = (row.app or "").strip() or "unknown"
         key = app_key(raw_app)
         locked = is_lock_screen(raw_app, row.window_title)
+
+        def add_app_bucket(seconds: float) -> None:
+            nonlocal work, other
+            if seconds <= 0 or locked:
+                return
+            apps[key] = apps.get(key, 0) + seconds
+            if classify_app(raw_app, row.window_title) == "work":
+                work += seconds
+            else:
+                other += seconds
+
         # Explicit no-face / lock = away (break). Unknown present = idle only (via elapsed - seated).
         if locked or row.present == 0:
             away += use
-            apps[key] = apps.get(key, 0) + use
+            add_app_bucket(use)
             return
         if row.present == 1:
             seated += use
-            apps[key] = apps.get(key, 0) + use
-            if classify_app(raw_app, row.window_title) == "work":
-                work += use
-            else:
-                other += use
+            add_app_bucket(use)
             return
         # present is None / unknown — still count app time while clocked in
-        apps[key] = apps.get(key, 0) + use
-        if classify_app(raw_app, row.window_title) == "work":
-            work += use
-        else:
-            other += use
+        add_app_bucket(use)
+
+    grace = float(getattr(config, "PRESENCE_GAP_GRACE_SECONDS", 180))
 
     for i, row in enumerate(rows):
         t0 = as_dt(row.created_at)
@@ -294,10 +301,14 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             gap = max((t1 - t0).total_seconds(), float(config.HEARTBEAT_SECONDS))
             t1 = t0 + timedelta(seconds=gap)
         if gap > sleep_gap:
-            # Long gap while clocked in: cannot see face → idle via (elapsed - seated).
-            # Only a short beat keeps last known app/away state.
-            beat = float(config.HEARTBEAT_SECONDS)
-            credit(row, beat, t0, t0 + timedelta(seconds=beat))
+            # Chrome often throttles the My desk tab to ~60s. Keep last face/away
+            # state through short gaps so Idle does not swallow most of the day.
+            if gap <= grace and row.present in (0, 1):
+                credit(row, gap, t0, t1)
+            else:
+                # Real disconnect / sleep — only a short beat; rest is Idle (no face)
+                beat = float(config.HEARTBEAT_SECONDS)
+                credit(row, beat, t0, t0 + timedelta(seconds=beat))
         else:
             credit(row, min(max(gap, 0), cap), t0, t1)
 

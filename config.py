@@ -78,8 +78,10 @@ IDLE_AFTER_SECONDS = _int("IDLE_AFTER_SECONDS", 60)
 AWAY_ALERT_SECONDS = _int("AWAY_ALERT_SECONDS", 900)
 BREAK_ALLOWANCE_SECONDS = _int("BREAK_ALLOWANCE_SECONDS", 30 * 60)
 OFFLINE_AFTER_SECONDS = _int("OFFLINE_AFTER_SECONDS", 25)
-# Treat heartbeat gaps longer than this as laptop sleep (Idle KPI)
+# Treat heartbeat gaps longer than this as a possible disconnect
 SLEEP_GAP_SECONDS = _int("SLEEP_GAP_SECONDS", 45)
+# Still credit last face/away state across short gaps (Chrome throttles background tabs ~1/min)
+PRESENCE_GAP_GRACE_SECONDS = _int("PRESENCE_GAP_GRACE_SECONDS", 180)
 # Keep "present" briefly if face briefly leaves frame / looks away
 IDENTITY_HOLD_SECONDS = _int("IDENTITY_HOLD_SECONDS", 450)
 # Delete heartbeats older than this (keeps SQLite small). Reports only need recent days.
