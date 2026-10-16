@@ -94,8 +94,8 @@ export default function People() {
         <div>
           <h1>People</h1>
           <p className="muted">
-            Add employees here, or they can create their own account from the sign-in page. Reset username/password if
-            someone is locked out.
+            Add employees here, or they can create their own account from the sign-in page. Reset login only changes the
+            website password — the Windows agent on their PC keeps working.
           </p>
         </div>
       </header>

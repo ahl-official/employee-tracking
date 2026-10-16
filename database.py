@@ -45,8 +45,24 @@ def purge_old_data(db: Session | None = None) -> dict:
     return {"heartbeats": int(n_hb or 0), "alerts": int(n_al or 0)}
 
 
+def _ensure_agent_password_column() -> None:
+    """SQLite: add agent_password for existing DBs (create_all does not alter tables)."""
+    try:
+        with engine.connect() as conn:
+            rows = conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()
+            cols = {r[1] for r in rows}
+            if "agent_password" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE users ADD COLUMN agent_password VARCHAR(120) DEFAULT ''"
+                )
+                conn.commit()
+    except Exception:
+        pass
+
+
 def init_db() -> None:
     Base.metadata.create_all(engine)
+    _ensure_agent_password_column()
     db = Session(engine)
     try:
         purge_old_data(db)
@@ -57,6 +73,7 @@ def init_db() -> None:
                 User(
                     username="hr",
                     password=hash_password("hr123"),
+                    agent_password="",
                     name="HR Desk",
                     role="hr",
                     department="People Ops",
@@ -64,6 +81,10 @@ def init_db() -> None:
             ]
             db.add_all(users)
             db.commit()
+        # Freeze current website password as agent password when missing (one-time)
+        for u in db.query(User).filter(User.role == "employee").all():
+            if not (u.agent_password or "").strip() and u.password:
+                u.agent_password = u.password
         _rename_saniya(db)
         for row in db.query(User).filter(User.on_break.is_(True)).all():
             row.on_break = False

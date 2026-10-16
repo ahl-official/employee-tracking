@@ -1,18 +1,21 @@
 """
 DeskTrack Windows agent — apps only (split mode).
 
-Browser (Chrome) owns the webcam for face + presence.
-This agent only reports the foreground desktop app to the server.
+Browser (Chrome) = face / presence.
+This agent = foreground desktop apps.
 
-Setup: Install-DeskTrack-Agent.bat once (Startup + hidden).
+Uses /api/agent/login so website password resets do not break app tracking
+(the server keeps a separate frozen agent password).
 """
 
 from __future__ import annotations
 
 import configparser
 import ctypes
+import os
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 import requests
@@ -20,6 +23,9 @@ import requests
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.ini"
 LOG_PATH = ROOT / "agent.log"
+AGENT_RAW_URL = (
+    "https://raw.githubusercontent.com/ahl-official/employee-tracking/main/agent/desktrack_agent.py"
+)
 
 ES_CONTINUOUS = 0x80000000
 ES_SYSTEM_REQUIRED = 0x00000001
@@ -89,15 +95,36 @@ def load_config() -> configparser.ConfigParser:
     return cfg
 
 
-def login(session: requests.Session, base: str, username: str, password: str) -> dict:
+def maybe_self_update() -> None:
+    try:
+        with urllib.request.urlopen(AGENT_RAW_URL, timeout=20) as res:
+            remote = res.read()
+        local = Path(__file__).read_bytes()
+        if remote and remote != local and b"def main" in remote:
+            Path(__file__).write_bytes(remote)
+            log("Updated agent from GitHub — restarting…")
+            os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
+    except Exception as exc:
+        log(f"Self-update skipped ({exc})")
+
+
+def agent_login(session: requests.Session, base: str, username: str, password: str) -> dict:
     res = session.post(
-        f"{base}/api/login",
+        f"{base}/api/agent/login",
         json={"username": username, "password": password},
         timeout=15,
     )
     data = res.json() if res.content else {}
     if res.status_code != 200 or not data.get("ok"):
-        raise RuntimeError(data.get("error") or f"Login failed ({res.status_code})")
+        # Fallback for older servers
+        res = session.post(
+            f"{base}/api/login",
+            json={"username": username, "password": password},
+            timeout=15,
+        )
+        data = res.json() if res.content else {}
+        if res.status_code != 200 or not data.get("ok"):
+            raise RuntimeError(data.get("error") or f"Login failed ({res.status_code})")
     return data["user"]
 
 
@@ -112,6 +139,7 @@ def ensure_clocked_in(session: requests.Session, base: str) -> bool:
 
 
 def main() -> None:
+    maybe_self_update()
     cfg = load_config()
     base = cfg.get("server", "url", fallback="http://127.0.0.1:8000").rstrip("/")
     username = cfg.get("auth", "username", fallback="").strip()
@@ -125,7 +153,13 @@ def main() -> None:
 
     session = requests.Session()
     log(f"Logging in as {username} -> {base}")
-    user = login(session, base, username, password)
+    user = None
+    while user is None:
+        try:
+            user = agent_login(session, base, username, password)
+        except Exception as exc:
+            log(f"Login failed ({exc}). Retrying in 20s…")
+            time.sleep(20)
     if user.get("role") != "employee":
         log("Agent is for employee accounts only.")
         sys.exit(1)
@@ -163,7 +197,11 @@ def main() -> None:
                         continue
                 if res.status_code == 401:
                     log("Session expired — logging in again…")
-                    login(session, base, username, password)
+                    try:
+                        agent_login(session, base, username, password)
+                    except Exception as exc:
+                        log(f"Re-login failed ({exc}).")
+                        time.sleep(15)
                     continue
                 if res.status_code != 200:
                     raise requests.RequestException(f"HTTP {res.status_code}")

@@ -566,7 +566,10 @@ export default function Desk() {
           <article className="card apps-card">
             <h2>Apps today</h2>
             <p className="hint apps-hint">
-              Desktop apps come from the Windows agent. Face and presence come from this browser camera.
+              {p?.agent_apps
+                ? "Windows agent is connected — desktop apps are updating."
+                : "Windows agent not detected. Install/start DeskTrack Agent on this PC (and update config.ini if the password changed)."}{" "}
+              Face comes from this browser camera.
             </p>
             <ul className="apps">
               {(today.apps || []).length ? (
@@ -577,7 +580,13 @@ export default function Desk() {
                   </li>
                 ))
               ) : (
-                <li>No samples yet.</li>
+                <li>
+                  {p?.clocked_in
+                    ? p?.agent_apps
+                      ? "Waiting for app samples…"
+                      : "No apps yet — start the DeskTrack Agent on this PC, then keep Clock in."
+                    : "Clock in to start tracking apps."}
+                </li>
               )}
             </ul>
           </article>

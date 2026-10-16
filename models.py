@@ -16,6 +16,8 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True)
     password: Mapped[str] = mapped_column(String(120))
+    # Frozen at account create / agent install — website password resets do NOT change this
+    agent_password: Mapped[str] = mapped_column(String(120), default="")
     name: Mapped[str] = mapped_column(String(120))
     role: Mapped[str] = mapped_column(String(20))
     department: Mapped[str] = mapped_column(String(80), default="")

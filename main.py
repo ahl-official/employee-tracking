@@ -440,9 +440,11 @@ def api_signup(request: Request, payload: dict = Body(...), db: Session = Depend
         return JSONResponse({"ok": False, "error": "Password must be at least 6 characters."}, status_code=400)
     if db.query(User).filter_by(username=username).first():
         return JSONResponse({"ok": False, "error": "That username is already taken."}, status_code=409)
+    pw_hash = hash_password(password)
     user = User(
         username=username,
-        password=hash_password(password),
+        password=pw_hash,
+        agent_password=pw_hash,
         name=name,
         role="employee",
         department=department,
@@ -648,17 +650,13 @@ def api_me_face_clear(request: Request, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@app.post("/api/me/apps")
-def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
-    """Windows agent: desktop app only (no camera). Merged into browser presence heartbeats."""
-    user = require(request, db, "employee")
-    if not user:
-        return JSONResponse({"ok": False}, status_code=401)
+def record_agent_apps(db: Session, user: User, app_name: str, window_title: str) -> dict:
+    """Persist foreground app from Windows agent into heartbeats + live FG file."""
     analytics.close_overnight_sessions(db, user.id)
     if analytics.open_session(db, user.id) is None:
-        return JSONResponse({"ok": False, "error": "clocked out"}, status_code=400)
-    app_name = str(payload.get("app") or "Unknown")[:80]
-    window_title = str(payload.get("window_title") or "")[:180]
+        return {"ok": False, "error": "clocked out", "status": 400}
+    app_name = str(app_name or "Unknown")[:80]
+    window_title = str(window_title or "")[:180]
     locked = analytics.is_lock_screen(app_name, window_title)
     save_agent_foreground(user.id, app_name, window_title)
     last = (
@@ -668,7 +666,6 @@ def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depen
         .first()
     )
     min_gap = float(getattr(config, "TRACK_MIN_INTERVAL", 3))
-    # Win+L: force away heartbeats so break allowance is consumed even if Chrome is frozen
     if locked:
         try:
             face_id._last_match_at.pop(user.id, None)
@@ -698,13 +695,11 @@ def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depen
 
     ago = analytics.seconds_ago(last.created_at) if last is not None else 999.0
     if last is not None and ago < 90:
-        # Merge into recent browser/face heartbeat
         last.app = app_name
         last.window_title = window_title
         last.device = "laptop"
         db.commit()
     else:
-        # Browser tab throttled/closed — still record desktop apps (no face claim)
         db.add(
             Heartbeat(
                 user_id=user.id,
@@ -719,6 +714,53 @@ def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depen
         )
         db.commit()
     return {"ok": True, "app": analytics.pretty_app_name(app_name), "locked": False}
+
+
+@app.post("/api/agent/login")
+def api_agent_login(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """
+    Agent login. Accepts the frozen agent_password (unchanged when HR resets website password)
+    or the current website password (then freezes it as agent_password).
+    """
+    from passwords import hash_password, verify_password
+
+    username = str(payload.get("username") or "").strip().lower()
+    password = str(payload.get("password") or "")
+    user = db.query(User).filter_by(username=username).first()
+    if not user or user.role != "employee":
+        return JSONResponse({"ok": False, "error": "Wrong username or password."}, status_code=401)
+
+    agent_pw = (user.agent_password or "").strip()
+    ok_agent = bool(agent_pw) and verify_password(password, agent_pw)
+    ok_site = verify_password(password, user.password)
+    if not ok_agent and not ok_site:
+        return JSONResponse({"ok": False, "error": "Wrong username or password."}, status_code=401)
+
+    # Keep agent_password in sync with whatever the agent successfully uses.
+    # Website password resets only change user.password — agent keeps working.
+    if not ok_agent:
+        user.agent_password = hash_password(password)
+        db.commit()
+
+    request.session["user_id"] = user.id
+    return {"ok": True, "user": user_payload(user)}
+
+
+@app.post("/api/me/apps")
+def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Windows agent: desktop app only (session from /api/agent/login or /api/login)."""
+    user = require(request, db, "employee")
+    if not user:
+        return JSONResponse({"ok": False}, status_code=401)
+    result = record_agent_apps(
+        db,
+        user,
+        str(payload.get("app") or "Unknown"),
+        str(payload.get("window_title") or ""),
+    )
+    if not result.get("ok"):
+        return JSONResponse({"ok": False, "error": result.get("error")}, status_code=result.get("status", 400))
+    return result
 
 
 def _resolve_app_fields(user_id: int, payload: dict) -> tuple[str, str, str]:
@@ -1083,10 +1125,12 @@ def api_people_post(request: Request, payload: dict = Body(...), db: Session = D
         return JSONResponse({"ok": False, "error": "Password must be at least 6 characters."}, status_code=400)
     if db.query(User).filter_by(username=username).first():
         return JSONResponse({"ok": False, "error": "That username is already taken."}, status_code=409)
+    pw_hash = hash_password(password)
     db.add(
         User(
             username=username,
-            password=hash_password(password),
+            password=pw_hash,
+            agent_password=pw_hash,
             name=name,
             role="employee",
             department=department,
@@ -1098,7 +1142,7 @@ def api_people_post(request: Request, payload: dict = Body(...), db: Session = D
 
 @app.post("/api/people/{user_id}/reset")
 def api_people_reset(user_id: int, request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
-    """HR sets a new username and/or password for an employee (no old password needed)."""
+    """HR sets a new website username/password. Agent password on the PC is left alone."""
     if not require(request, db, "hr"):
         return JSONResponse({"ok": False}, status_code=401)
     user = db.get(User, user_id)
@@ -1124,6 +1168,7 @@ def api_people_reset(user_id: int, request: Request, payload: dict = Body(...), 
     if err:
         status = 409 if "taken" in err else 400
         return JSONResponse({"ok": False, "error": err}, status_code=status)
+    # Do NOT change user.agent_password — installed agents keep working
     db.commit()
     db.refresh(user)
     return {"ok": True, "user": user_payload(user)}
