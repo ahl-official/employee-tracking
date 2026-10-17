@@ -155,12 +155,23 @@ export default function Desk() {
       try {
         streamRef.current = stream;
         const cams = await refreshCameraList();
-        const activeId = stream.getVideoTracks()[0]?.getSettings?.()?.deviceId || "";
+        const activeTrack = stream.getVideoTracks()[0];
+        const activeId = activeTrack?.getSettings?.()?.deviceId || "";
         const activeLabel = cams.find((c) => c.deviceId === activeId)?.label || "";
         if (activeId) {
           setCameraId(activeId);
           cameraIdRef.current = activeId;
           localStorage.setItem("desktrack_camera_id", activeId);
+        }
+        if (activeTrack) {
+          activeTrack.onended = () => {
+            if (meRef.current?.clocked_in) {
+              setEmptyMsg("Camera disconnected. Reconnecting…");
+              setTimeout(() => {
+                startCamera(cameraIdRef.current);
+              }, 1200);
+            }
+          };
         }
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -344,6 +355,18 @@ export default function Desk() {
     window.addEventListener("focus", onVisible);
     const onHide = () => stopCamera();
     window.addEventListener("pagehide", onHide);
+
+    const onDeviceChange = async () => {
+      const cams = await refreshCameraList();
+      if (meRef.current?.clocked_in) {
+        const currentTrack = streamRef.current?.getVideoTracks()[0];
+        if (!currentTrack || currentTrack.readyState === "ended") {
+          startCamera(cameraIdRef.current);
+        }
+      }
+    };
+    navigator.mediaDevices?.addEventListener("devicechange", onDeviceChange);
+
     refresh();
     refreshFace();
     const t1 = setInterval(refresh, 3000);
@@ -385,6 +408,7 @@ export default function Desk() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onVisible);
       window.removeEventListener("pagehide", onHide);
+      navigator.mediaDevices?.removeEventListener("devicechange", onDeviceChange);
       clearInterval(t1);
       clearInterval(t2);
       clearInterval(t3);
