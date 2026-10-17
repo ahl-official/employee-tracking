@@ -176,7 +176,7 @@ def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[
     data = np.load(model_path(user_id))
     embeds = data["embeds"]
     boxes = detector.detect_faces(yunet, frame)
-    hold = float(getattr(config, "IDENTITY_HOLD_SECONDS", 12))
+    hold = float(getattr(config, "IDENTITY_HOLD_SECONDS", 420))
     now = time.time()
 
     if not boxes:
@@ -220,14 +220,11 @@ def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[
             return True, best, "hold", best_box
         return False, best, "outside_zone", best_box
 
-    # Face seen but not this employee
-    if best > 0.35 and boxes:
-        _last_match_at.pop(user_id, None)
-        return False, best, "mismatch", best_box
-
+    # Face seen but score is below threshold or not matched:
+    # Retain presence for up to hold duration (7 minutes) before declaring mismatch/absent
     if now - _last_match_at.get(user_id, 0) < hold:
         return True, best, "hold", best_box
-    return False, best, "mismatch", best_box
+    return False, best, "mismatch" if boxes else "no_face", best_box
 
 
 def mark_identity_boxes(marks: list, matched: bool, matched_box: tuple[int, int, int, int] | None) -> list:

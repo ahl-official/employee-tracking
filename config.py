@@ -77,13 +77,13 @@ HEARTBEAT_SECONDS = _int("HEARTBEAT_SECONDS", 4)
 IDLE_AFTER_SECONDS = _int("IDLE_AFTER_SECONDS", 60)
 AWAY_ALERT_SECONDS = _int("AWAY_ALERT_SECONDS", 900)
 BREAK_ALLOWANCE_SECONDS = _int("BREAK_ALLOWANCE_SECONDS", 30 * 60)
-OFFLINE_AFTER_SECONDS = _int("OFFLINE_AFTER_SECONDS", 25)
+OFFLINE_AFTER_SECONDS = _int("OFFLINE_AFTER_SECONDS", 120)
 # Treat heartbeat gaps longer than this as a possible disconnect
 SLEEP_GAP_SECONDS = _int("SLEEP_GAP_SECONDS", 45)
 # Still credit last face/away state across short gaps (Chrome throttles background tabs ~1/min)
-PRESENCE_GAP_GRACE_SECONDS = _int("PRESENCE_GAP_GRACE_SECONDS", 180)
-# Keep "present" briefly if face briefly leaves frame / looks away
-IDENTITY_HOLD_SECONDS = _int("IDENTITY_HOLD_SECONDS", 450)
+PRESENCE_GAP_GRACE_SECONDS = _int("PRESENCE_GAP_GRACE_SECONDS", 420)
+# Keep "present" for up to 7 minutes (420s) if face briefly leaves frame / looks away
+IDENTITY_HOLD_SECONDS = _int("IDENTITY_HOLD_SECONDS", 420)
 # Delete heartbeats older than this (keeps SQLite small). Reports only need recent days.
 HEARTBEAT_KEEP_DAYS = _int("HEARTBEAT_KEEP_DAYS", 14)
 # Delete acknowledged alerts older than this

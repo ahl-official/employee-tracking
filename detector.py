@@ -10,6 +10,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import config
+
 MODEL_DIR = Path(__file__).with_name("yolo_model")
 ONNX_PATH = MODEL_DIR / "yolov5n.onnx"
 YUNET_PATH = MODEL_DIR / "face_detection_yunet_2023mar.onnx"
@@ -24,7 +26,7 @@ CONFIDENCE = 0.18
 NMS = 0.45
 PERSON_CLASS = 0
 FACE_SCORE = 0.45
-HOLD_SECONDS = 2.8
+HOLD_SECONDS = float(getattr(config, "IDENTITY_HOLD_SECONDS", 420))
 _hold_until = 0.0
 
 

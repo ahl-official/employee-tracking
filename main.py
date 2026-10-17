@@ -36,6 +36,7 @@ from models import Alert, Heartbeat, SessionLocal, User, WorkSession
 
 PREVIEW_FRAMES: dict[int, bytes] = {}
 PREVIEW_META: dict[int, dict] = {}
+_LAST_FACE_SEEN: dict[int, float] = {}
 _DETECT_NET = None
 _DETECT_FACE = None
 _cleanup_stop = threading.Event()
@@ -806,6 +807,7 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
 
     # Camera shutter / covered lens (often not pure black) → ABSENT
     if float(np.mean(frame)) < 40.0:
+        _LAST_FACE_SEEN.pop(user.id, None)
         try:
             face_id._last_match_at.pop(user.id, None)
         except Exception:
@@ -855,39 +857,82 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
     present, annotated, _score, marks = detector.annotate(frame, net, yunet)
     identity = {"required": False, "matched": True, "score": 0.0, "reason": "not_enrolled"}
     matched_box = None
+    now_ts = time.time()
+    hold_seconds = float(getattr(config, "IDENTITY_HOLD_SECONDS", 420))
+    face_seen_now = False
+
     if face_id.has_enrollment(user.id):
         matched, score, reason, matched_box = face_id.verify(
             user.id, frame, yunet, require_desk_zone=True
         )
         identity = {"required": True, "matched": matched, "score": round(score, 3), "reason": reason}
-        present = bool(matched)
+        if matched and reason == "matched":
+            face_seen_now = True
+            _LAST_FACE_SEEN[user.id] = now_ts
         marks = face_id.mark_identity_boxes(marks, matched, matched_box)
-        status = "Status: PRESENT (you)" if present else f"Status: ABSENT ({reason})"
-        color = (0, 255, 0) if present else (0, 0, 255)
-        cv2.putText(annotated, status, (12, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        maybe_identity_alert(db, user, identity)
-    ok, buf = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-    if ok:
-        PREVIEW_FRAMES[user.id] = buf.tobytes()
-        PREVIEW_META[user.id] = {"blocked": False}
+        present = bool(matched)
+    else:
+        if present and _score > 0:
+            face_seen_now = True
+            _LAST_FACE_SEEN[user.id] = now_ts
 
-    if (
-        last is not None
-        and last.present == 1
-        and not present
-        and identity.get("reason") in {"no_face", "hold"}
-        and (analytics.seconds_ago(last.created_at) or 999) < float(config.IDENTITY_HOLD_SECONDS)
-    ):
-        present = True
-        identity = {**identity, "matched": True, "reason": "hold"}
+    # 7-minute buffer when face is temporarily not seen/matched
+    if not face_seen_now and not present:
+        last_seen = _LAST_FACE_SEEN.get(user.id)
+        if last_seen is None:
+            # Fallback to DB for most recent present heartbeat
+            last_p = (
+                db.query(Heartbeat)
+                .filter(Heartbeat.user_id == user.id, Heartbeat.present == 1)
+                .order_by(Heartbeat.id.desc())
+                .first()
+            )
+            if last_p and last_p.created_at:
+                dt = analytics.as_dt(last_p.created_at)
+                if dt:
+                    last_seen = dt.timestamp()
+                    _LAST_FACE_SEEN[user.id] = last_seen
+
+        if last_seen is not None and (now_ts - last_seen) < hold_seconds:
+            present = True
+            if face_id.has_enrollment(user.id):
+                identity["matched"] = True
+                identity["reason"] = "hold"
+        else:
+            present = False
 
     # Win+L reported by agent overrides face hold — you are away on break
     if analytics.is_lock_screen(app_name, window_title):
         present = False
+        _LAST_FACE_SEEN.pop(user.id, None)
         try:
             face_id._last_match_at.pop(user.id, None)
         except Exception:
             pass
+
+    # Status text overlay on live preview
+    if face_id.has_enrollment(user.id):
+        if present:
+            if identity.get("reason") == "hold":
+                rem = max(0, int(hold_seconds - (now_ts - _LAST_FACE_SEEN.get(user.id, now_ts))))
+                status = f"Status: PRESENT (hold {rem}s)"
+            else:
+                status = "Status: PRESENT (you)"
+            color = (0, 255, 0)
+        else:
+            status = f"Status: ABSENT ({identity.get('reason', 'away')})"
+            color = (0, 0, 255)
+        cv2.putText(annotated, status, (12, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        maybe_identity_alert(db, user, identity)
+    else:
+        status = "Status: PRESENT" if present else "Status: ABSENT"
+        color = (0, 255, 0) if present else (0, 0, 255)
+        cv2.putText(annotated, status, (12, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+    ok, buf = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    if ok:
+        PREVIEW_FRAMES[user.id] = buf.tobytes()
+        PREVIEW_META[user.id] = {"blocked": False}
 
     if last is not None and (analytics.seconds_ago(last.created_at) or 999) < min_gap:
         # Refresh live fields only — do NOT bump created_at (that broke seated/apps timers)
@@ -1066,6 +1111,11 @@ def api_clock(request: Request, payload: dict = Body(...), db: Session = Depends
         open_row.clock_out = utc_now()
         PREVIEW_FRAMES.pop(user.id, None)
         PREVIEW_META.pop(user.id, None)
+        _LAST_FACE_SEEN.pop(user.id, None)
+        try:
+            face_id._last_match_at.pop(user.id, None)
+        except Exception:
+            pass
     db.commit()
     clocked_in = analytics.open_session(db, user.id) is not None
     start, end = analytics.day_range()

@@ -362,7 +362,7 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         # present is None / unknown — still count app time while clocked in
         add_app_bucket(use)
 
-    grace = float(getattr(config, "PRESENCE_GAP_GRACE_SECONDS", 180))
+    grace = float(getattr(config, "PRESENCE_GAP_GRACE_SECONDS", 420))
 
     for i, row in enumerate(rows):
         t0 = as_dt(row.created_at)
@@ -375,14 +375,18 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             gap = max((t1 - t0).total_seconds(), float(config.HEARTBEAT_SECONDS))
             t1 = t0 + timedelta(seconds=gap)
         if gap > sleep_gap:
-            # Chrome often throttles the My desk tab to ~60s. Keep last face/away
-            # state through short gaps so Idle does not swallow most of the day.
-            if gap <= grace and row.present in (0, 1):
+            # Chrome often throttles the My desk tab to ~60s or more.
+            # Keep last face/away state through gaps up to grace (7 mins).
+            if gap <= grace:
                 credit(row, gap, t0, t1)
             else:
-                # Real disconnect / sleep — only a short beat; rest is Idle (no face)
-                beat = float(config.HEARTBEAT_SECONDS)
-                credit(row, beat, t0, t0 + timedelta(seconds=beat))
+                # Long gap (> 7 min, e.g. disconnect, sleep, camera off):
+                # If face was present at t0, credit up to 7 mins (grace hold); rest is Idle
+                if row.present == 1:
+                    credit(row, grace, t0, t0 + timedelta(seconds=grace))
+                else:
+                    beat = float(config.HEARTBEAT_SECONDS)
+                    credit(row, beat, t0, t0 + timedelta(seconds=beat))
         else:
             credit(row, min(max(gap, 0), cap), t0, t1)
 
@@ -393,18 +397,29 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
     break_used = min(away, allowance)
     break_left = max(0.0, allowance - away)
 
-    # Seated = face visible while clocked in.
-    # Idle = clocked-in time with no face (away, sleep, offline, shutter).
-    # Seated + Idle = time from clock-in to clock-out (capped at 9h).
-    if elapsed_capped <= 0:
+    # Seated = face visible while clocked in (with 7m hold).
+    # Idle = clocked-in time with no face (away, lock, sleep, no camera, long gap).
+    # Seated + Idle = 9 hours standard day, or until clock out if overtime (OT).
+    has_open_session = open_session(db, user_id) is not None
+    if not intervals or elapsed <= 0:
         seated_s = 0.0
         idle_s = 0.0
         presence = 0
+        total_clocked = 0.0
     else:
-        seated_s = min(float(seated), elapsed_capped)
-        idle_s = max(0.0, elapsed_capped - seated_s)
-        # Presence vs expected 9h day; also equals seated/(seated+idle) when fully clocked 9h
-        presence = int(round(100.0 * seated_s / workday_full)) if workday_full > 0 else 0
+        if elapsed >= workday_full:
+            # Overtime: count full elapsed time until clock out
+            total_clocked = elapsed
+        elif has_open_session:
+            # Live session in progress
+            total_clocked = elapsed
+        else:
+            # Day completed / clocked out: partition standard 9h workday
+            total_clocked = max(elapsed, workday_full)
+
+        seated_s = min(float(seated), total_clocked)
+        idle_s = max(0.0, total_clocked - seated_s)
+        presence = int(round(100.0 * seated_s / total_clocked)) if total_clocked > 0 else 0
 
     return {
         "samples": len(rows),
@@ -417,7 +432,7 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         "useful_pct": round(useful),
         "presence_pct": presence,
         "workday_seconds": int(workday_full),
-        "clocked_seconds": int(elapsed_capped),
+        "clocked_seconds": int(total_clocked),
         "seated_seconds": int(seated_s),
         "idle_seconds": int(idle_s),
         "break_used": fmt_hours(break_used),
