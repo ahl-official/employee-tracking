@@ -32,7 +32,7 @@ import config
 import detector
 import face_id
 from database import init_db, purge_old_data, utc_now
-from models import Alert, Heartbeat, SessionLocal, User, WorkSession, TaskRequest
+from models import Alert, Base, Heartbeat, SessionLocal, User, WorkSession, TaskRequest, engine
 
 PREVIEW_FRAMES: dict[int, bytes] = {}
 PREVIEW_META: dict[int, dict] = {}
