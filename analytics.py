@@ -189,9 +189,9 @@ def live_status(beat: Heartbeat | None, clocked_in=True, break_left=0, ignore_st
     )
     if not clocked_in:
         return "offline" if stale or beat is None else "clocked-out"
-    # Still clocked in but no pings (laptop sleep, closed lid, tab frozen) → inactive (= Idle/sleep)
+    # Still clocked in but no pings (laptop sleep, closed lid, tab frozen)
     if stale or beat is None:
-        return "inactive"
+        return "break" if break_left > 0 else "inactive"
     if beat.present == 0:
         return "break" if break_left > 0 else "away"
     # Present at desk while PC is awake → always Active (ignore mouse-idle flag)
@@ -434,21 +434,18 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
                 credit(row, gap, t0, t1)
             else:
                 # Long gap (> 7 min, e.g. disconnect, sleep, camera off):
-                # If face was present at t0, credit up to 7 mins (grace hold); rest is Idle
+                # If face was present at t0, credit up to grace hold (7 mins); rest is Idle/Away.
                 if row.present == 1:
                     credit(row, grace, t0, t0 + timedelta(seconds=grace))
                 else:
-                    beat = float(config.HEARTBEAT_SECONDS)
-                    credit(row, beat, t0, t0 + timedelta(seconds=beat))
+                    # Explicit away/no-face before the gap -> entire gap is away time
+                    credit(row, gap, t0, t1)
         else:
             credit(row, min(max(gap, 0), cap), t0, t1)
 
     active = sum(apps.values())
     all_apps = sorted(apps.items(), key=lambda item: item[1], reverse=True)
     useful = (work / (work + other) * 100) if (work + other) else 0
-    allowance = config.BREAK_ALLOWANCE_SECONDS
-    break_used = min(away, allowance)
-    break_left = max(0.0, allowance - away)
 
     # Seated = face visible while clocked in (with 7m hold).
     # Idle = clocked-in time with no face (away, lock, sleep, no camera, long gap).
@@ -464,12 +461,18 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         idle_s = max(0.0, total_clocked - seated_s)
         presence = int(round(100.0 * seated_s / total_clocked)) if total_clocked > 0 else 0
 
+    allowance = config.BREAK_ALLOWANCE_SECONDS
+    # All time spent clocked-in but away from desk (idle_s) or explicit no-face heartbeats consumes break allowance
+    away_total = max(float(away), float(idle_s))
+    break_used = min(away_total, allowance)
+    break_left = max(0.0, allowance - away_total)
+
     return {
         "samples": len(rows),
         "seated": fmt_hours(seated_s),
         "active": fmt_hours(active),
         "idle": fmt_hours(idle_s),
-        "away": fmt_hours(away),
+        "away": fmt_hours(away_total),
         "work": fmt_hours(work),
         "other": fmt_hours(other),
         "useful_pct": round(useful),
@@ -481,7 +484,7 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         "break_used": fmt_hours(break_used),
         "break_left": fmt_hours(break_left),
         "break_left_seconds": int(break_left),
-        "away_seconds": int(away),
+        "away_seconds": int(away_total),
         "apps": [
             {
                 "app": app_labels.get(name, pretty_app_name(name)),
