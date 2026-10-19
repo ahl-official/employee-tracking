@@ -53,18 +53,16 @@ export default function Desk() {
     setTaskSubmitting(true);
     setTaskError("");
     try {
-      const res = await fetch("/api/tasks/request", {
+      const { ok, data } = await api("/api/tasks/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reason: taskReason.trim(),
           location: taskLocation.trim(),
           expected_minutes: Number(taskMinutes) || 15,
         }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setTaskError(data.error || "Failed to submit request.");
+      if (!ok) {
+        setTaskError(data?.error || "Failed to submit request.");
       } else {
         setShowTaskModal(false);
         setTaskReason("");
@@ -72,8 +70,8 @@ export default function Desk() {
         setTaskMinutes(15);
         refresh();
       }
-    } catch {
-      setTaskError("Network error. Could not connect to server.");
+    } catch (err) {
+      setTaskError("Could not connect to server: " + (err.message || err));
     } finally {
       setTaskSubmitting(false);
     }
@@ -82,7 +80,7 @@ export default function Desk() {
   const endTask = async (taskId) => {
     setTaskActionBusy(true);
     try {
-      await fetch(`/api/tasks/${taskId}/end`, { method: "POST" });
+      await api(`/api/tasks/${taskId}/end`, { method: "POST" });
       refresh();
     } finally {
       setTaskActionBusy(false);
@@ -92,7 +90,7 @@ export default function Desk() {
   const cancelTask = async (taskId) => {
     setTaskActionBusy(true);
     try {
-      await fetch(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+      await api(`/api/tasks/${taskId}/cancel`, { method: "POST" });
       refresh();
     } finally {
       setTaskActionBusy(false);
