@@ -538,14 +538,145 @@ code { background: var(--line); padding: 0.05rem 0.3rem; border-radius: 4px; }
 .desk-page .side {
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: 0.75rem;
   min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.35rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+.desk-page .side::-webkit-scrollbar {
+  width: 6px;
+}
+.desk-page .side::-webkit-scrollbar-track {
+  background: transparent;
+}
+.desk-page .side::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+.desk-page .side::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+.desk-page .side .now-card,
+.desk-page .side .connect-card {
+  flex-shrink: 0;
 }
 .desk-page .side .apps-card {
+  flex: 1 0 auto;
+  min-height: 220px;
+  padding: 0.85rem 0.95rem;
+  display: flex;
+  flex-direction: column;
+}
+.apps-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.apps-card-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.apps-count {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #5c5348;
+  background: #f0e8d8;
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+}
+.apps-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.apps-scroll-wrap {
   flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 0.75rem 0.85rem;
+  min-height: 120px;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+.apps-scroll-wrap::-webkit-scrollbar {
+  width: 5px;
+}
+.apps-scroll-wrap::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}
+.app-name-text {
+  font-weight: 500;
+  font-size: 0.88rem;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-time-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #4b453d;
+  flex-shrink: 0;
+}
+.apps-empty {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-style: italic;
+  padding: 0.5rem 0;
+}
+.connect-card {
+  padding: 0.85rem 0.95rem;
+}
+.connect-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+.connect-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.badge-connected {
+  background: #e8f5e9;
+  color: #2e7d32;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 12px;
+}
+.badge-not-connected {
+  background: #fff3e0;
+  color: #e65100;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 12px;
+}
+.btn-download-launcher {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.55rem 0.9rem;
+  margin-top: 0.45rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.15s, opacity 0.15s;
+}
+.btn-download-launcher:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
 }
 .face-card {
   margin-bottom: 0.8rem;

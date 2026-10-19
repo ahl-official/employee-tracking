@@ -454,6 +454,7 @@ export default function Desk() {
 
   const p = me;
   const today = p?.today || {};
+  const maxAppSec = Math.max(...(today.apps || []).map((a) => a.seconds || 0), 1);
   const present = p?.present === 1 ? "yes" : p?.present === 0 ? "no" : "unknown";
   const seatClass = p?.present === 1 ? "yes" : p?.present === 0 ? "no" : "";
 
@@ -644,24 +645,36 @@ export default function Desk() {
             )}
           </article>
           <article className="card apps-card">
-            <h2>Activity today</h2>
+            <div className="apps-card-header">
+              <h2>Activity today</h2>
+              {(today.apps || []).length > 0 && (
+                <span className="apps-count">{(today.apps || []).length} active</span>
+              )}
+            </div>
             <p className="hint apps-hint">
               Browser activity and desk presence while clocked in.
             </p>
-            <ul className="apps">
-              {(today.apps || []).length ? (
-                today.apps.map((a) => (
-                  <li key={a.app}>
-                    <span>{a.app}</span>
-                    <span>{a.label}</span>
+            <div className="apps-scroll-wrap">
+              <ul className="apps">
+                {(today.apps || []).length ? (
+                  today.apps.map((a) => (
+                    <li key={a.app}>
+                      <div>
+                        <span className="app-name-text" title={a.app}>{a.app}</span>
+                        <span className="bar">
+                          <i style={{ width: `${Math.round(((a.seconds || 0) / maxAppSec) * 100)}%` }} />
+                        </span>
+                      </div>
+                      <span className="app-time-label">{a.label}</span>
+                    </li>
+                  ))
+                ) : (
+                  <li className="apps-empty">
+                    {p?.clocked_in ? "Tracking activity… Open your browser tabs or apps." : "Clock in to start tracking."}
                   </li>
-                ))
-              ) : (
-                <li>
-                  {p?.clocked_in ? "Tracking activity…" : "Clock in to start tracking."}
-                </li>
-              )}
-            </ul>
+                )}
+              </ul>
+            </div>
           </article>
         </div>
       </div>
