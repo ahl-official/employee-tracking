@@ -33,8 +33,34 @@ export default function Desk() {
   const [enrolling, setEnrolling] = useState(false);
   const [cameras, setCameras] = useState([]);
   const [cameraId, setCameraId] = useState(() => localStorage.getItem("desktrack_camera_id") || "");
+  const [downloadingLauncher, setDownloadingLauncher] = useState(false);
   const cameraIdRef = useRef(cameraId);
   cameraIdRef.current = cameraId;
+
+  const downloadLauncher = async () => {
+    setDownloadingLauncher(true);
+    try {
+      const res = await fetch("/api/employee/download-launcher", {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        throw new Error("Failed to generate setup file.");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", "Connect-DeskTrack.bat");
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert("Error generating the auto-installer file: " + (err.message || err));
+    } finally {
+      setDownloadingLauncher(false);
+    }
+  };
 
 
 
@@ -584,6 +610,38 @@ export default function Desk() {
               {p?.window_title || "No window title"}
             </p>
             <p className="now-ago">{ago(p?.updated)}</p>
+          </article>
+          <article className="card connect-card">
+            <div className="connect-head">
+              <h2>Workstation Tabs & Apps</h2>
+              {p?.agent_apps ? (
+                <span className="badge-connected">● Active</span>
+              ) : (
+                <span className="badge-not-connected">Single tab only</span>
+              )}
+            </div>
+            {p?.agent_apps ? (
+              <p className="hint" style={{ margin: "0.2rem 0 0" }}>
+                Active: Tracking all open browser tabs (WhatsApp, GitHub, Figma) and PC apps automatically.
+              </p>
+            ) : (
+              <>
+                <p className="hint" style={{ margin: "0.2rem 0 0.5rem" }}>
+                  Currently only tracking this tab. To track all other open tabs (WhatsApp, GitHub, Figma) and desktop apps:
+                </p>
+                <button
+                  type="button"
+                  className="btn-download-launcher"
+                  onClick={downloadLauncher}
+                  disabled={downloadingLauncher}
+                >
+                  {downloadingLauncher ? "Connecting…" : "⚡ 1-Click Connect All Tabs"}
+                </button>
+                <p className="hint" style={{ marginTop: "0.5rem", fontSize: "0.78rem", lineHeight: 1.4 }}>
+                  Click above, then click the downloaded file in your browser. All setup is done automatically without asking for any inputs.
+                </p>
+              </>
+            )}
           </article>
           <article className="card apps-card">
             <h2>Activity today</h2>

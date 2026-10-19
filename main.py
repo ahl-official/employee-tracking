@@ -813,14 +813,25 @@ def generate_one_click_launcher(request: Request, db: Session = Depends(get_db))
         db.commit()
     agent_password = user.agent_password
 
-    powershell_script = f"""# DeskTrack 1-Click Agent Setup for {username}
+    bat_script = f"""@echo off
+setlocal
+title DeskTrack 1-Click Auto Connector
+echo ==========================================
+echo    DeskTrack Workstation Auto-Connector
+echo ==========================================
+echo Connecting workstation for {username}...
+more +7 "%~f0" > "%TEMP%\\dt_setup.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\\dt_setup.ps1"
+del "%TEMP%\\dt_setup.ps1" 2>nul
+exit /b
+# DeskTrack 1-Click Agent Setup for {username}
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $ErrorActionPreference = "Continue"
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   DeskTrack Workstation Auto-Connector   " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "Connecting employee: {username}" -ForegroundColor Yellow
+Write-Host "Employee: {username}" -ForegroundColor Yellow
 Write-Host "Server: {server_url}" -ForegroundColor Gray
 Write-Host ""
 
@@ -839,14 +850,14 @@ if (!(Get-Command python -ErrorAction SilentlyContinue)) {{
     if (Get-Command python3 -ErrorAction SilentlyContinue) {{
         $pyCmd = "python3"
     }} else {{
-        Write-Host "Python not found. Installing Python quietly..." -ForegroundColor Yellow
+        Write-Host "Python not found. Installing Python quietly in background..." -ForegroundColor Yellow
         $TargetInstaller = "$env:TEMP\\python_installer.exe"
         try {{
             Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" -OutFile $TargetInstaller -UseBasicParsing
             Start-Process -FilePath $TargetInstaller -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1" -Wait
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
         }} catch {{
-            Write-Host "Could not auto-download Python. Please install Python from https://python.org and rerun this script." -ForegroundColor Red
+            Write-Host "Could not auto-download Python. Please verify internet connection." -ForegroundColor Red
             Read-Host "Press Enter to exit"
             exit 1
         }}
@@ -854,50 +865,46 @@ if (!(Get-Command python -ErrorAction SilentlyContinue)) {{
 }}
 
 # 2. Fetch agent files from DeskTrack server
-Write-Host "Downloading background agent components from DeskTrack..." -ForegroundColor Cyan
+Write-Host "Setting up tracker components..." -ForegroundColor Cyan
 try {{
     Invoke-WebRequest -Uri "$ServerUrl/static/agent/desktrack_agent.py" -OutFile "$InstallDir\\desktrack_agent.py" -UseBasicParsing
     Invoke-WebRequest -Uri "$ServerUrl/static/agent/requirements.txt" -OutFile "$InstallDir\\requirements.txt" -UseBasicParsing
 }} catch {{
-    Write-Host "Failed to download agent files from $ServerUrl. Please verify network connection." -ForegroundColor Red
+    Write-Host "Failed to download tracker from $ServerUrl." -ForegroundColor Red
     Read-Host "Press Enter to exit"
     exit 1
 }}
 
-# 3. Pip install dependencies
-Write-Host "Verifying Python dependencies..." -ForegroundColor Cyan
+# 3. Pip install dependencies quietly
 Start-Process -FilePath $pyCmd -ArgumentList "-m pip install --quiet --upgrade requests" -Wait -WindowStyle Hidden
 
-# 4. Initialize configuration silently
-Write-Host "Configuring personal workstation credentials..." -ForegroundColor Cyan
+# 4. Initialize configuration automatically (no user input needed)
 Start-Process -FilePath $pyCmd -ArgumentList "`"$InstallDir\\desktrack_agent.py`" `"$ServerUrl`" `"$Username`" `"$AgentPassword`"" -Wait -WindowStyle Hidden
 
 # 5. Stop any existing background agent instances before launching
 Get-Process pythonw -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" -or $_.CommandLine -like "*desktrack_agent.py*" }} | Stop-Process -Force -ErrorAction SilentlyContinue
 
-# 6. Inject Windows startup registry entry for automatic login
+# 6. Inject Windows startup registry entry for automatic start on login
 $RegPath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 $LaunchCommand = "pythonw.exe `"$InstallDir\\desktrack_agent.py`""
 Set-ItemProperty -Path $RegPath -Name "DeskTrackAgent" -Value $LaunchCommand
 
 # 7. Launch background agent immediately
-Write-Host "Starting DeskTrack background service..." -ForegroundColor Cyan
 Start-Process -FilePath "pythonw" -ArgumentList "`"$InstallDir\\desktrack_agent.py`"" -WorkingDirectory $InstallDir
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
-Write-Host "   DeskTrack Connected Successfully!      " -ForegroundColor Green
+Write-Host "   Connected Successfully!               " -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
-Write-Host "Your apps (Figma, Cursor, Chrome, etc.) will now automatically update in DeskTrack."
-Write-Host "This agent runs quietly in the background and auto-starts on Windows login."
-Write-Host "You can close this window now."
-Start-Sleep -Seconds 4
+Write-Host "All browser tabs (WhatsApp, Figma, GitHub, etc.) and apps are now being tracked."
+Write-Host "This runs quietly in the background and starts automatically on Windows login."
+Start-Sleep -Seconds 3
 """
 
     return PlainTextResponse(
-        content=powershell_script,
+        content=bat_script,
         headers={
-            "Content-Disposition": "attachment; filename=Connect-DeskTrack.ps1"
+            "Content-Disposition": "attachment; filename=Connect-DeskTrack.bat"
         },
     )
 
