@@ -813,6 +813,13 @@ def generate_one_click_launcher(request: Request, db: Session = Depends(get_db))
         db.commit()
     agent_password = user.agent_password
 
+    import base64
+    agent_path = AGENT_DIR / "desktrack_agent.py"
+    if agent_path.is_file():
+        agent_code_b64 = base64.b64encode(agent_path.read_bytes()).decode("ascii")
+    else:
+        agent_code_b64 = ""
+
     bat_script = f"""@echo off
 setlocal
 title DeskTrack 1-Click Auto Connector
@@ -820,11 +827,11 @@ echo ==========================================
 echo    DeskTrack Workstation Auto-Connector
 echo ==========================================
 echo Connecting workstation for {username}...
-more +7 "%~f0" > "%TEMP%\\dt_setup.ps1"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\\dt_setup.ps1"
-del "%TEMP%\\dt_setup.ps1" 2>nul
-exit /b
-# DeskTrack 1-Click Agent Setup for {username}
+for /f "tokens=1 delims=:" %%n in ('findstr /n "^###DT_AGENT_PAYLOAD###" "%~f0"') do set /a skip=%%n
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath '%~f0' | Select-Object -Skip %skip% | Out-String | Invoke-Expression"
+exit /b %ERRORLEVEL%
+
+###DT_AGENT_PAYLOAD###
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $ErrorActionPreference = "Continue"
 
@@ -844,7 +851,32 @@ if (!(Test-Path $InstallDir)) {{
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 }}
 
-# 1. Check Python installation
+# 1. Unpack tracker code directly (self-contained, no network download needed)
+Write-Host "Setting up tracker components..." -ForegroundColor Cyan
+$agentB64 = "{agent_code_b64}"
+if ($agentB64 -and $agentB64.Length -gt 100) {{
+    [System.IO.File]::WriteAllBytes("$InstallDir\\desktrack_agent.py", [System.Convert]::FromBase64String($agentB64))
+}} else {{
+    $agentUrls = @(
+        "$ServerUrl/static/agent/desktrack_agent.py",
+        "https://raw.githubusercontent.com/ahl-official/employee-tracking/main/agent/desktrack_agent.py"
+    )
+    $downloaded = $false
+    foreach ($u in $agentUrls) {{
+        try {{
+            Invoke-WebRequest -Uri $u -OutFile "$InstallDir\\desktrack_agent.py" -UseBasicParsing -TimeoutSec 10
+            $downloaded = $true
+            break
+        }} catch {{}}
+    }}
+    if (!$downloaded) {{
+        Write-Host "Failed to obtain tracker from server." -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit 1
+    }}
+}}
+
+# 2. Check Python installation
 $pyCmd = "python"
 if (!(Get-Command python -ErrorAction SilentlyContinue)) {{
     if (Get-Command python3 -ErrorAction SilentlyContinue) {{
@@ -864,19 +896,12 @@ if (!(Get-Command python -ErrorAction SilentlyContinue)) {{
     }}
 }}
 
-# 2. Fetch agent files from DeskTrack server
-Write-Host "Setting up tracker components..." -ForegroundColor Cyan
-try {{
-    Invoke-WebRequest -Uri "$ServerUrl/static/agent/desktrack_agent.py" -OutFile "$InstallDir\\desktrack_agent.py" -UseBasicParsing
-    Invoke-WebRequest -Uri "$ServerUrl/static/agent/requirements.txt" -OutFile "$InstallDir\\requirements.txt" -UseBasicParsing
-}} catch {{
-    Write-Host "Failed to download tracker from $ServerUrl." -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
+# 3. Pip install dependencies quietly if not already present
+& $pyCmd -c "import requests" 2>$null
+if ($LASTEXITCODE -ne 0) {{
+    Write-Host "Installing dependencies..." -ForegroundColor Cyan
+    Start-Process -FilePath $pyCmd -ArgumentList "-m pip install --quiet --upgrade requests" -Wait -WindowStyle Hidden
 }}
-
-# 3. Pip install dependencies quietly
-Start-Process -FilePath $pyCmd -ArgumentList "-m pip install --quiet --upgrade requests" -Wait -WindowStyle Hidden
 
 # 4. Initialize configuration automatically (no user input needed)
 Start-Process -FilePath $pyCmd -ArgumentList "`"$InstallDir\\desktrack_agent.py`" `"$ServerUrl`" `"$Username`" `"$AgentPassword`"" -Wait -WindowStyle Hidden
@@ -896,8 +921,8 @@ Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "   Connected Successfully!               " -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
-Write-Host "All browser tabs (WhatsApp, Figma, GitHub, etc.) and apps are now being tracked."
-Write-Host "This runs quietly in the background and starts automatically on Windows login."
+Write-Host "All browser tabs (WhatsApp, Figma, GitHub, etc.) and apps are now being tracked." -ForegroundColor White
+Write-Host "This runs quietly in the background and starts automatically on Windows login." -ForegroundColor Gray
 Start-Sleep -Seconds 3
 """
 
@@ -907,6 +932,7 @@ Start-Sleep -Seconds 3
             "Content-Disposition": "attachment; filename=Connect-DeskTrack.bat"
         },
     )
+
 
 
 def _resolve_app_fields(user_id: int, payload: dict) -> tuple[str, str, str]:
