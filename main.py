@@ -185,7 +185,9 @@ def current_user(request: Request, db: Session) -> User | None:
 
 def require(request: Request, db: Session, *roles: str) -> User | None:
     user = current_user(request, db)
-    if not user or user.role not in roles:
+    if not user:
+        return None
+    if roles and user.role not in roles:
         return None
     return user
 
@@ -1487,13 +1489,13 @@ def api_alert_seen(alert_id: int, request: Request, db: Session = Depends(get_db
 
 
 # --- Movement / Task Request Endpoints ---
-
+ 
 @app.post("/api/tasks/request")
 def api_tasks_request(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
     """Employee submits a request to step away from their desk for an official task / room meeting."""
-    user = require(request, db, "employee")
+    user = require(request, db)
     if not user:
-        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+        return JSONResponse({"ok": False, "error": "Unauthorized. Please log in again."}, status_code=401)
 
     reason = str(payload.get("reason") or "").strip()
     if not reason:
@@ -1506,38 +1508,45 @@ def api_tasks_request(request: Request, payload: dict = Body(...), db: Session =
         expected_minutes = 15
     expected_minutes = max(5, min(180, expected_minutes))
 
-    # Cancel any older pending requests
-    db.query(TaskRequest).filter_by(user_id=user.id, status="pending").update({"status": "cancelled"})
+    try:
+        # Self-healing: ensure TaskRequest table exists in database
+        Base.metadata.create_all(bind=db.get_bind())
 
-    now = datetime.now(timezone.utc)
-    task = TaskRequest(
-        user_id=user.id,
-        reason=reason,
-        location=location,
-        expected_minutes=expected_minutes,
-        status="pending",
-        requested_at=now,
-    )
-    db.add(task)
+        # Cancel any older pending requests
+        db.query(TaskRequest).filter_by(user_id=user.id, status="pending").update({"status": "cancelled"})
 
-    # Notify HR
-    loc_str = f" in {location}" if location else ""
-    alert_msg = f"{user.name} requested away on task: {reason}{loc_str} ({expected_minutes}m)"
-    db.add(Alert(user_id=user.id, message=alert_msg, created_at=now, seen=False))
+        now = datetime.now(timezone.utc)
+        task = TaskRequest(
+            user_id=user.id,
+            reason=reason,
+            location=location,
+            expected_minutes=expected_minutes,
+            status="pending",
+            requested_at=now,
+        )
+        db.add(task)
 
-    db.commit()
-    db.refresh(task)
-    return {
-        "ok": True,
-        "task": {
-            "id": task.id,
-            "reason": task.reason,
-            "location": task.location,
-            "expected_minutes": task.expected_minutes,
-            "status": task.status,
-            "requested_at": iso(task.requested_at),
-        },
-    }
+        # Notify HR
+        loc_str = f" in {location}" if location else ""
+        alert_msg = f"{user.name} requested away on task: {reason}{loc_str} ({expected_minutes}m)"
+        db.add(Alert(user_id=user.id, message=alert_msg, created_at=now, seen=False))
+
+        db.commit()
+        db.refresh(task)
+        return {
+            "ok": True,
+            "task": {
+                "id": task.id,
+                "reason": task.reason,
+                "location": task.location,
+                "expected_minutes": task.expected_minutes,
+                "status": task.status,
+                "requested_at": iso(task.requested_at),
+            },
+        }
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse({"ok": False, "error": f"Database error: {str(exc)}"}, status_code=500)
 
 
 @app.post("/api/tasks/{task_id}/end")
@@ -1545,19 +1554,24 @@ def api_tasks_end(task_id: int, request: Request, db: Session = Depends(get_db))
     """Employee marks that they are back at their desk."""
     user = require(request, db)
     if not user:
-        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+        return JSONResponse({"ok": False, "error": "Unauthorized. Please log in."}, status_code=401)
 
-    task = db.get(TaskRequest, task_id)
-    if not task:
-        return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
-    if user.role != "hr" and task.user_id != user.id:
-        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=403)
+    try:
+        Base.metadata.create_all(bind=db.get_bind())
+        task = db.get(TaskRequest, task_id)
+        if not task:
+            return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
+        if user.role != "hr" and task.user_id != user.id:
+            return JSONResponse({"ok": False, "error": "Unauthorized to end this task."}, status_code=403)
 
-    now = datetime.now(timezone.utc)
-    task.ended_at = now
-    task.status = "completed"
-    db.commit()
-    return {"ok": True}
+        now = datetime.now(timezone.utc)
+        task.ended_at = now
+        task.status = "completed"
+        db.commit()
+        return {"ok": True}
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
 
 @app.post("/api/tasks/{task_id}/cancel")
@@ -1565,17 +1579,22 @@ def api_tasks_cancel(task_id: int, request: Request, db: Session = Depends(get_d
     """Employee cancels a pending request."""
     user = require(request, db)
     if not user:
-        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+        return JSONResponse({"ok": False, "error": "Unauthorized. Please log in."}, status_code=401)
 
-    task = db.get(TaskRequest, task_id)
-    if not task:
-        return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
-    if user.role != "hr" and task.user_id != user.id:
-        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=403)
+    try:
+        Base.metadata.create_all(bind=db.get_bind())
+        task = db.get(TaskRequest, task_id)
+        if not task:
+            return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
+        if user.role != "hr" and task.user_id != user.id:
+            return JSONResponse({"ok": False, "error": "Unauthorized to cancel this task."}, status_code=403)
 
-    task.status = "cancelled"
-    db.commit()
-    return {"ok": True}
+        task.status = "cancelled"
+        db.commit()
+        return {"ok": True}
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
 
 @app.get("/api/tasks/pending")
@@ -1584,26 +1603,30 @@ def api_tasks_pending(request: Request, db: Session = Depends(get_db)):
     if not require(request, db, "hr"):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
 
-    pending = (
-        db.query(TaskRequest)
-        .filter(TaskRequest.status == "pending")
-        .order_by(TaskRequest.requested_at.desc())
-        .all()
-    )
-    results = []
-    for t in pending:
-        u = t.user
-        results.append({
-            "id": t.id,
-            "user_id": t.user_id,
-            "employee_name": u.name if u else "Unknown",
-            "department": u.department if u else "",
-            "reason": t.reason,
-            "location": t.location,
-            "expected_minutes": t.expected_minutes,
-            "requested_at": iso(t.requested_at),
-        })
-    return {"ok": True, "pending": results}
+    try:
+        Base.metadata.create_all(bind=db.get_bind())
+        pending = (
+            db.query(TaskRequest)
+            .filter(TaskRequest.status == "pending")
+            .order_by(TaskRequest.requested_at.desc())
+            .all()
+        )
+        results = []
+        for t in pending:
+            u = t.user
+            results.append({
+                "id": t.id,
+                "user_id": t.user_id,
+                "employee_name": u.name if u else "Unknown",
+                "department": u.department if u else "",
+                "reason": t.reason,
+                "location": t.location,
+                "expected_minutes": t.expected_minutes,
+                "requested_at": iso(t.requested_at),
+            })
+        return {"ok": True, "pending": results}
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "pending": []}, status_code=500)
 
 
 @app.post("/api/tasks/{task_id}/approve")
@@ -1613,19 +1636,24 @@ def api_tasks_approve(task_id: int, request: Request, db: Session = Depends(get_
     if not hr_user:
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
 
-    task = db.get(TaskRequest, task_id)
-    if not task:
-        return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
-    if task.status != "pending":
-        return JSONResponse({"ok": False, "error": f"Task is already {task.status}."}, status_code=400)
+    try:
+        Base.metadata.create_all(bind=db.get_bind())
+        task = db.get(TaskRequest, task_id)
+        if not task:
+            return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
+        if task.status != "pending":
+            return JSONResponse({"ok": False, "error": f"Task is already {task.status}."}, status_code=400)
 
-    now = datetime.now(timezone.utc)
-    task.status = "approved"
-    task.started_at = now
-    task.approver_id = hr_user.id
-    task.reviewed_at = now
-    db.commit()
-    return {"ok": True}
+        now = datetime.now(timezone.utc)
+        task.status = "approved"
+        task.started_at = now
+        task.approver_id = hr_user.id
+        task.reviewed_at = now
+        db.commit()
+        return {"ok": True}
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
 
 @app.post("/api/tasks/{task_id}/reject")
@@ -1635,19 +1663,24 @@ def api_tasks_reject(task_id: int, request: Request, payload: dict = Body({}), d
     if not hr_user:
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
 
-    task = db.get(TaskRequest, task_id)
-    if not task:
-        return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
-    if task.status != "pending":
-        return JSONResponse({"ok": False, "error": f"Task is already {task.status}."}, status_code=400)
+    try:
+        Base.metadata.create_all(bind=db.get_bind())
+        task = db.get(TaskRequest, task_id)
+        if not task:
+            return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
+        if task.status != "pending":
+            return JSONResponse({"ok": False, "error": f"Task is already {task.status}."}, status_code=400)
 
-    now = datetime.now(timezone.utc)
-    task.status = "rejected"
-    task.approver_id = hr_user.id
-    task.reviewed_at = now
-    task.rejection_reason = str(payload.get("reason") or "Declined by lead").strip()
-    db.commit()
-    return {"ok": True}
+        now = datetime.now(timezone.utc)
+        task.status = "rejected"
+        task.approver_id = hr_user.id
+        task.reviewed_at = now
+        task.rejection_reason = str(payload.get("reason") or "Declined by lead").strip()
+        db.commit()
+        return {"ok": True}
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
 
 

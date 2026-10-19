@@ -4,7 +4,13 @@ export async function api(path, options = {}) {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   });
-  const data = await res.json().catch(() => ({}));
+  let data = null;
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    data = await res.json().catch(() => ({}));
+  } else {
+    data = await res.text().catch(() => "");
+  }
   return { ok: res.ok, status: res.status, data };
 }
 

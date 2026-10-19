@@ -33,3 +33,18 @@
   3. Real-time Lead/HR approval with a dedicated badge and quick **[Approve]** / **[Reject]** actions.
   4. Time spent on approved tasks is credited to **Productive Work** (`task_work_seconds`), does **NOT** count as Idle, and does **NOT** consume personal break allowance.
 - **Files Affected:** `models.py`, `main.py`, `analytics.py`, `frontend/src/pages/Desk.jsx`, `frontend/src/pages/Live.jsx`.
+
+---
+
+## Decision 5: Self-Healing Task Tables & Universal Role Authorization for Desk Actions
+- **Date:** 2026-10-19
+- **Problem:** When employees or leads tested "Step Away on Official Task", the modal displayed `"Failed to submit request."`
+  1. `Base.metadata.create_all()` was previously only invoked on server startup, meaning running production servers without an explicit restart or migration lacked the `task_requests` table in SQLite.
+  2. `require(request, db, *roles)` rejected any user if `roles` was not provided (`user.role not in ()`), and strictly restricted desk task submission to `role == "employee"`, blocking testing by HR/admin accounts.
+  3. API errors returning plain text or non-JSON (like 500 or 404) resulted in empty JSON objects in frontend `api()`, falling back to a vague generic error string.
+- **Decision:**
+  1. Auto-create missing database tables dynamically on endpoint access (`Base.metadata.create_all(bind=db.get_bind())`) so existing production databases self-heal automatically.
+  2. Fix `require()` to allow any authenticated session when no specific role filter is given, and allow both employees and admins/leads to submit task requests from their desk.
+  3. Update `api()` and `Desk.jsx` to parse and render explicit server errors (`data.error`, `data.detail`, or HTTP status) so error reasons are immediately transparent.
+- **Files Affected:** `main.py`, `frontend/src/api.js`, `frontend/src/pages/Desk.jsx`, `DECISIONS.md`.
+

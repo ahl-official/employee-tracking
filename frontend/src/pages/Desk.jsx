@@ -53,7 +53,7 @@ export default function Desk() {
     setTaskSubmitting(true);
     setTaskError("");
     try {
-      const { ok, data } = await api("/api/tasks/request", {
+      const { ok, status, data } = await api("/api/tasks/request", {
         method: "POST",
         body: JSON.stringify({
           reason: taskReason.trim(),
@@ -62,7 +62,8 @@ export default function Desk() {
         }),
       });
       if (!ok) {
-        setTaskError(data?.error || "Failed to submit request.");
+        const msg = (typeof data === "string" && data) || data?.error || data?.detail || `Failed to submit request (HTTP ${status || "error"}).`;
+        setTaskError(msg);
       } else {
         setShowTaskModal(false);
         setTaskReason("");
