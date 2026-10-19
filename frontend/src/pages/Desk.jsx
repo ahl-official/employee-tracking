@@ -34,8 +34,70 @@ export default function Desk() {
   const [cameras, setCameras] = useState([]);
   const [cameraId, setCameraId] = useState(() => localStorage.getItem("desktrack_camera_id") || "");
   const [downloadingLauncher, setDownloadingLauncher] = useState(false);
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [taskReason, setTaskReason] = useState("");
+  const [taskLocation, setTaskLocation] = useState("");
+  const [taskMinutes, setTaskMinutes] = useState(15);
+  const [taskSubmitting, setTaskSubmitting] = useState(false);
+  const [taskActionBusy, setTaskActionBusy] = useState(false);
+  const [taskError, setTaskError] = useState("");
   const cameraIdRef = useRef(cameraId);
   cameraIdRef.current = cameraId;
+
+  const submitTaskRequest = async (e) => {
+    e?.preventDefault();
+    if (!taskReason.trim()) {
+      setTaskError("Please provide a reason or select one below.");
+      return;
+    }
+    setTaskSubmitting(true);
+    setTaskError("");
+    try {
+      const res = await fetch("/api/tasks/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: taskReason.trim(),
+          location: taskLocation.trim(),
+          expected_minutes: Number(taskMinutes) || 15,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setTaskError(data.error || "Failed to submit request.");
+      } else {
+        setShowTaskModal(false);
+        setTaskReason("");
+        setTaskLocation("");
+        setTaskMinutes(15);
+        refresh();
+      }
+    } catch {
+      setTaskError("Network error. Could not connect to server.");
+    } finally {
+      setTaskSubmitting(false);
+    }
+  };
+
+  const endTask = async (taskId) => {
+    setTaskActionBusy(true);
+    try {
+      await fetch(`/api/tasks/${taskId}/end`, { method: "POST" });
+      refresh();
+    } finally {
+      setTaskActionBusy(false);
+    }
+  };
+
+  const cancelTask = async (taskId) => {
+    setTaskActionBusy(true);
+    try {
+      await fetch(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+      refresh();
+    } finally {
+      setTaskActionBusy(false);
+    }
+  };
 
   const downloadLauncher = async () => {
     setDownloadingLauncher(true);
@@ -472,11 +534,65 @@ export default function Desk() {
       <header className="page">
         <h1>My desk</h1>
         <div className="actions">
+          {p?.clocked_in && !p?.active_task && !p?.pending_task ? (
+            <button
+              type="button"
+              className="btn-task-trigger"
+              onClick={() => setShowTaskModal(true)}
+            >
+              📋 Step Away on Task
+            </button>
+          ) : null}
           <button type="button" onClick={toggleClock}>
             {p?.clocked_in ? "Clock out" : "Clock in"}
           </button>
         </div>
       </header>
+
+      {p?.active_task ? (
+        <div className="callout task-active-callout">
+          <div className="task-banner-info">
+            <span className="task-pulse-dot" />
+            <div>
+              <strong className="task-title">On Task: {p.active_task.reason}</strong>
+              {p.active_task.location ? <span className="task-loc"> ({p.active_task.location})</span> : null}
+              <div className="task-subtext">
+                Approved by Lead · Expected: {p.active_task.expected_minutes}m · Camera alerts paused &amp; official work credited.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn-back-desk"
+            onClick={() => endTask(p.active_task.id)}
+            disabled={taskActionBusy}
+          >
+            {taskActionBusy ? "Updating…" : "✓ I'm Back at Desk"}
+          </button>
+        </div>
+      ) : p?.pending_task ? (
+        <div className="callout task-pending-callout">
+          <div className="task-banner-info">
+            <span className="task-hourglass">⏳</span>
+            <div>
+              <strong className="task-title">Movement Request Pending: {p.pending_task.reason}</strong>
+              {p.pending_task.location ? <span className="task-loc"> ({p.pending_task.location})</span> : null}
+              <div className="task-subtext">
+                Sent to Lead / HR for approval ({p.pending_task.expected_minutes}m). You can proceed once approved.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="ghost btn-cancel-task"
+            onClick={() => cancelTask(p.pending_task.id)}
+            disabled={taskActionBusy}
+          >
+            Cancel Request
+          </button>
+        </div>
+      ) : null}
+
       <div className={calloutOk ? "callout ok" : "callout"}>{callout}</div>
       {!face.enrolled ? (
         <>
@@ -678,6 +794,106 @@ export default function Desk() {
           </article>
         </div>
       </div>
+
+      {showTaskModal && (
+        <div className="modal-backdrop" onClick={() => !taskSubmitting && setShowTaskModal(false)}>
+          <div className="modal-card task-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>📋 Step Away on Official Task</h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setShowTaskModal(false)}
+                disabled={taskSubmitting}
+              >
+                ✕
+              </button>
+            </div>
+            <p className="hint" style={{ margin: "0.2rem 0 1rem" }}>
+              Going to another room, meeting, or client call? Submit a quick request to your lead. Once approved, this time is credited as official work and does not deduct from your break allowance.
+            </p>
+
+            <form onSubmit={submitTaskRequest} className="task-form">
+              {taskError ? <div className="error-banner">{taskError}</div> : null}
+
+              <label className="field-label">
+                Task / Reason *
+                <input
+                  type="text"
+                  placeholder="e.g. Conference room meeting, client call..."
+                  value={taskReason}
+                  onChange={(e) => setTaskReason(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </label>
+
+              <div className="task-presets">
+                <span className="preset-label">Quick select:</span>
+                {[
+                  "Conference Room Meeting",
+                  "Client Call",
+                  "Discussion with Lead",
+                  "Hardware / Lab Task",
+                  "Warehouse / Printing",
+                ].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    className={`preset-pill ${taskReason === preset ? "selected" : ""}`}
+                    onClick={() => setTaskReason(preset)}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+
+              <div className="form-row-2">
+                <label className="field-label">
+                  Room / Location (Optional)
+                  <input
+                    type="text"
+                    placeholder="e.g. Room 2, Cabin B, Lab..."
+                    value={taskLocation}
+                    onChange={(e) => setTaskLocation(e.target.value)}
+                  />
+                </label>
+
+                <label className="field-label">
+                  Expected Duration
+                  <select
+                    value={taskMinutes}
+                    onChange={(e) => setTaskMinutes(Number(e.target.value))}
+                  >
+                    <option value={10}>10 minutes</option>
+                    <option value={15}>15 minutes</option>
+                    <option value={20}>20 minutes</option>
+                    <option value={30}>30 minutes</option>
+                    <option value={45}>45 minutes</option>
+                    <option value={60}>1 hour</option>
+                    <option value={90}>1.5 hours</option>
+                    <option value={120}>2 hours</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => setShowTaskModal(false)}
+                  disabled={taskSubmitting}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={taskSubmitting}>
+                  {taskSubmitting ? "Sending Request…" : "Send to Lead for Approval"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }

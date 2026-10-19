@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 import config
-from models import Heartbeat, WorkSession
+from models import Heartbeat, WorkSession, TaskRequest
 
 
 def local_now():
@@ -178,7 +178,7 @@ def activity_bucket(app: str | None, title: str | None) -> tuple[str, str]:
     return f"app:{key}", pretty_app_name(app)
 
 
-def live_status(beat: Heartbeat | None, clocked_in=True, break_left=0, ignore_stale=False) -> str:
+def live_status(beat: Heartbeat | None, clocked_in=True, break_left=0, ignore_stale=False, on_task=False) -> str:
     stale = (
         not ignore_stale
         and (
@@ -189,6 +189,8 @@ def live_status(beat: Heartbeat | None, clocked_in=True, break_left=0, ignore_st
     )
     if not clocked_in:
         return "offline" if stale or beat is None else "clocked-out"
+    if on_task:
+        return "task"
     # Still clocked in but no pings (laptop sleep, closed lid, tab frozen)
     if stale or beat is None:
         return "break" if break_left > 0 else "inactive"
@@ -455,14 +457,38 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         idle_s = 0.0
         presence = 0
         total_clocked = 0.0
+        task_seconds = 0.0
     else:
         total_clocked = elapsed
         seated_s = min(float(seated), total_clocked)
         idle_s = max(0.0, total_clocked - seated_s)
         presence = int(round(100.0 * seated_s / total_clocked)) if total_clocked > 0 else 0
 
+        # Account for approved tasks away from desk (meetings, other room, etc.)
+        task_rows = (
+            db.query(TaskRequest)
+            .filter(
+                TaskRequest.user_id == user_id,
+                TaskRequest.status.in_(["approved", "completed"]),
+                TaskRequest.started_at < end,
+                (TaskRequest.ended_at == None) | (TaskRequest.ended_at >= start),
+            )
+            .all()
+        )
+        task_seconds = 0.0
+        for tr in task_rows:
+            t_start = as_dt(tr.started_at or tr.requested_at)
+            t_end = as_dt(tr.ended_at) if tr.ended_at else min(now, end)
+            if t_end > t_start:
+                task_seconds += overlap_intervals(max(t_start, start), min(t_end, end), intervals)
+
+        # Official tasks count toward productive work
+        work += task_seconds
+        # Remove approved task time from idle so employees are not penalized
+        idle_s = max(0.0, idle_s - task_seconds)
+
     allowance = config.BREAK_ALLOWANCE_SECONDS
-    # All time spent clocked-in but away from desk (idle_s) or explicit no-face heartbeats consumes break allowance
+    # Away time that consumes personal break excludes approved official task time
     away_total = max(float(away), float(idle_s))
     break_used = min(away_total, allowance)
     break_left = max(0.0, allowance - away_total)
@@ -475,6 +501,8 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         "away": fmt_hours(away_total),
         "work": fmt_hours(work),
         "other": fmt_hours(other),
+        "task_seconds": int(task_seconds),
+        "task_time": fmt_hours(task_seconds),
         "useful_pct": round(useful),
         "presence_pct": presence,
         "workday_seconds": int(workday_full),

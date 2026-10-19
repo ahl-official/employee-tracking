@@ -32,7 +32,7 @@ import config
 import detector
 import face_id
 from database import init_db, purge_old_data, utc_now
-from models import Alert, Heartbeat, SessionLocal, User, WorkSession
+from models import Alert, Heartbeat, SessionLocal, User, WorkSession, TaskRequest
 
 PREVIEW_FRAMES: dict[int, bytes] = {}
 PREVIEW_META: dict[int, dict] = {}
@@ -223,6 +223,24 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
     viewing_today = analytics.is_today(day)
     analytics.close_overnight_sessions(db, emp.id)
     summary = analytics.summarize(db, emp.id, start, end)
+    active_task = (
+        db.query(TaskRequest)
+        .filter(
+            TaskRequest.user_id == emp.id,
+            TaskRequest.status == "approved",
+            TaskRequest.ended_at == None,
+        )
+        .first()
+    )
+    pending_task = (
+        db.query(TaskRequest)
+        .filter(
+            TaskRequest.user_id == emp.id,
+            TaskRequest.status == "pending",
+        )
+        .first()
+    )
+
     if viewing_today:
         beat = latest_beat(db, emp.id)
         session_row = analytics.open_session(db, emp.id)
@@ -230,6 +248,7 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
             beat,
             clocked_in=session_row is not None,
             break_left=summary["break_left_seconds"],
+            on_task=active_task is not None,
         )
         clocked_in = session_row is not None
     else:
@@ -241,6 +260,7 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
                 clocked_in=True,
                 break_left=summary["break_left_seconds"],
                 ignore_stale=True,
+                on_task=False,
             )
             if beat
             else "offline"
@@ -262,6 +282,21 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
         "department": emp.department,
         "status": status,
         "on_break": status == "break",
+        "on_task": status == "task",
+        "active_task": None if not active_task else {
+            "id": active_task.id,
+            "reason": active_task.reason,
+            "location": active_task.location,
+            "expected_minutes": active_task.expected_minutes,
+            "started_at": iso(active_task.started_at or active_task.requested_at),
+        },
+        "pending_task": None if not pending_task else {
+            "id": pending_task.id,
+            "reason": pending_task.reason,
+            "location": pending_task.location,
+            "expected_minutes": pending_task.expected_minutes,
+            "requested_at": iso(pending_task.requested_at),
+        },
         "break_left": summary["break_left"],
         "break_used": summary["break_used"],
         "clocked_in": clocked_in,
@@ -285,6 +320,9 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
 
 def maybe_alert(db: Session, user: User, present, clocked_in: bool, break_left: int):
     if not clocked_in or not analytics.inside_work_hours():
+        return
+    # Skip alerts if user is actively on an approved official task
+    if db.query(TaskRequest).filter_by(user_id=user.id, status="approved", ended_at=None).first():
         return
     if present is not False:
         return
@@ -1169,7 +1207,7 @@ def api_team(request: Request, db: Session = Depends(get_db)):
     employees = db.query(User).filter_by(role="employee").order_by(User.name).all()
     team = [employee_card(db, emp) for emp in employees]
     db.commit()
-    counts = {"present": 0, "away": 0, "idle": 0, "inactive": 0, "break": 0, "offline": 0, "clocked-out": 0}
+    counts = {"present": 0, "away": 0, "idle": 0, "inactive": 0, "break": 0, "task": 0, "offline": 0, "clocked-out": 0}
     for person in team:
         counts[person["status"]] = counts.get(person["status"], 0) + 1
     alerts = (
@@ -1446,6 +1484,171 @@ def api_alert_seen(alert_id: int, request: Request, db: Session = Depends(get_db
         alert.seen = True
         db.commit()
     return {"ok": True}
+
+
+# --- Movement / Task Request Endpoints ---
+
+@app.post("/api/tasks/request")
+def api_tasks_request(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+    """Employee submits a request to step away from their desk for an official task / room meeting."""
+    user = require(request, db, "employee")
+    if not user:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return JSONResponse({"ok": False, "error": "Please provide a reason for stepping away."}, status_code=400)
+
+    location = str(payload.get("location") or "").strip()
+    try:
+        expected_minutes = int(payload.get("expected_minutes") or 15)
+    except (ValueError, TypeError):
+        expected_minutes = 15
+    expected_minutes = max(5, min(180, expected_minutes))
+
+    # Cancel any older pending requests
+    db.query(TaskRequest).filter_by(user_id=user.id, status="pending").update({"status": "cancelled"})
+
+    now = datetime.now(timezone.utc)
+    task = TaskRequest(
+        user_id=user.id,
+        reason=reason,
+        location=location,
+        expected_minutes=expected_minutes,
+        status="pending",
+        requested_at=now,
+    )
+    db.add(task)
+
+    # Notify HR
+    loc_str = f" in {location}" if location else ""
+    alert_msg = f"{user.name} requested away on task: {reason}{loc_str} ({expected_minutes}m)"
+    db.add(Alert(user_id=user.id, message=alert_msg, created_at=now, seen=False))
+
+    db.commit()
+    db.refresh(task)
+    return {
+        "ok": True,
+        "task": {
+            "id": task.id,
+            "reason": task.reason,
+            "location": task.location,
+            "expected_minutes": task.expected_minutes,
+            "status": task.status,
+            "requested_at": iso(task.requested_at),
+        },
+    }
+
+
+@app.post("/api/tasks/{task_id}/end")
+def api_tasks_end(task_id: int, request: Request, db: Session = Depends(get_db)):
+    """Employee marks that they are back at their desk."""
+    user = require(request, db)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+    task = db.get(TaskRequest, task_id)
+    if not task:
+        return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
+    if user.role != "hr" and task.user_id != user.id:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=403)
+
+    now = datetime.now(timezone.utc)
+    task.ended_at = now
+    task.status = "completed"
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+def api_tasks_cancel(task_id: int, request: Request, db: Session = Depends(get_db)):
+    """Employee cancels a pending request."""
+    user = require(request, db)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+    task = db.get(TaskRequest, task_id)
+    if not task:
+        return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
+    if user.role != "hr" and task.user_id != user.id:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=403)
+
+    task.status = "cancelled"
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/tasks/pending")
+def api_tasks_pending(request: Request, db: Session = Depends(get_db)):
+    """HR / Lead views all pending task requests."""
+    if not require(request, db, "hr"):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+    pending = (
+        db.query(TaskRequest)
+        .filter(TaskRequest.status == "pending")
+        .order_by(TaskRequest.requested_at.desc())
+        .all()
+    )
+    results = []
+    for t in pending:
+        u = t.user
+        results.append({
+            "id": t.id,
+            "user_id": t.user_id,
+            "employee_name": u.name if u else "Unknown",
+            "department": u.department if u else "",
+            "reason": t.reason,
+            "location": t.location,
+            "expected_minutes": t.expected_minutes,
+            "requested_at": iso(t.requested_at),
+        })
+    return {"ok": True, "pending": results}
+
+
+@app.post("/api/tasks/{task_id}/approve")
+def api_tasks_approve(task_id: int, request: Request, db: Session = Depends(get_db)):
+    """Lead / HR approves a task request."""
+    hr_user = require(request, db, "hr")
+    if not hr_user:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+    task = db.get(TaskRequest, task_id)
+    if not task:
+        return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
+    if task.status != "pending":
+        return JSONResponse({"ok": False, "error": f"Task is already {task.status}."}, status_code=400)
+
+    now = datetime.now(timezone.utc)
+    task.status = "approved"
+    task.started_at = now
+    task.approver_id = hr_user.id
+    task.reviewed_at = now
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/tasks/{task_id}/reject")
+def api_tasks_reject(task_id: int, request: Request, payload: dict = Body({}), db: Session = Depends(get_db)):
+    """Lead / HR rejects a task request."""
+    hr_user = require(request, db, "hr")
+    if not hr_user:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+    task = db.get(TaskRequest, task_id)
+    if not task:
+        return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
+    if task.status != "pending":
+        return JSONResponse({"ok": False, "error": f"Task is already {task.status}."}, status_code=400)
+
+    now = datetime.now(timezone.utc)
+    task.status = "rejected"
+    task.approver_id = hr_user.id
+    task.reviewed_at = now
+    task.rejection_reason = str(payload.get("reason") or "Declined by lead").strip()
+    db.commit()
+    return {"ok": True}
+
 
 
 @app.get("/api/report")

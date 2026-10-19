@@ -1,3 +1,5 @@
 export function Badge({ status }) {
-  return <span className={`badge ${status || ""}`}>{status || "offline"}</span>;
+  const label = status === "task" ? "on task" : status || "offline";
+  return <span className={`badge ${status || ""}`}>{label}</span>;
 }
+

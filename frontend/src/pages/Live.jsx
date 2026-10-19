@@ -5,6 +5,11 @@ import { Badge } from "../components/Badge";
 
 function emptyFeedText(p) {
   if (!p.clocked_in) return "Clocked out — camera off";
+  if (p.on_task || p.status === "task") {
+    const reason = p.active_task?.reason || "Official Task";
+    const loc = p.active_task?.location ? ` in ${p.active_task.location}` : "";
+    return `📋 On Task: ${reason}${loc}`;
+  }
   if (p.status === "inactive") return "Inactive — laptop sleep or tab paused";
   if (p.camera_blocked) return "Camera blocked on their PC";
   if (!p.agent_live) return "Waiting for camera";
@@ -14,7 +19,15 @@ function emptyFeedText(p) {
 export default function Live() {
   const [data, setData] = useState(null);
   const [feeds, setFeeds] = useState({});
+  const [pendingTasks, setPendingTasks] = useState([]);
   const teamRef = useRef([]);
+
+  const fetchPendingTasks = useCallback(async () => {
+    const { ok, data: res } = await api("/api/tasks/pending");
+    if (ok && res.pending) {
+      setPendingTasks(res.pending);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     const { ok, data: next } = await api("/api/team");
@@ -22,7 +35,24 @@ export default function Live() {
       teamRef.current = next.team || [];
       setData(next);
     }
-  }, []);
+    fetchPendingTasks();
+  }, [fetchPendingTasks]);
+
+  const approveTask = async (id) => {
+    await api(`/api/tasks/${id}/approve`, { method: "POST" });
+    fetchPendingTasks();
+    refresh();
+  };
+
+  const rejectTask = async (id) => {
+    await api(`/api/tasks/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Declined by lead" }),
+    });
+    fetchPendingTasks();
+    refresh();
+  };
+
 
   useEffect(() => {
     function refreshFeeds() {
@@ -89,6 +119,10 @@ export default function Live() {
           <strong>{c.break || 0}</strong>
         </div>
         <div className="kpi">
+          <span>On Task</span>
+          <strong style={{ color: "#6366f1" }}>{c.task || 0}</strong>
+        </div>
+        <div className="kpi">
           <span>Clocked out</span>
           <strong>{c["clocked-out"] || 0}</strong>
         </div>
@@ -97,6 +131,55 @@ export default function Live() {
           <strong>{c.offline || 0}</strong>
         </div>
       </div>
+
+      {pendingTasks.length > 0 && (
+        <section className="card pending-tasks-card">
+          <div className="pending-tasks-header">
+            <div>
+              <h2>📋 Movement &amp; Task Approvals</h2>
+              <p className="hint" style={{ margin: "0.15rem 0 0" }}>
+                Employees requesting to leave their seat for meetings, client calls, or room tasks.
+              </p>
+            </div>
+            <span className="badge-pending-count">{pendingTasks.length} pending</span>
+          </div>
+          <div className="pending-tasks-list">
+            {pendingTasks.map((t) => (
+              <div key={t.id} className="pending-task-item">
+                <div className="pending-task-details">
+                  <div className="pending-emp-line">
+                    <strong className="pending-emp-name">{t.employee_name}</strong>
+                    <span className="pending-dept">{t.department ? `· ${t.department}` : ""}</span>
+                  </div>
+                  <div className="pending-task-info">
+                    <span className="pending-tag">Task: {t.reason}</span>
+                    {t.location ? <span className="pending-loc">📍 {t.location}</span> : null}
+                    <span className="pending-duration">⏱️ {t.expected_minutes}m</span>
+                    <span className="pending-time muted">Requested {ago(t.requested_at)}</span>
+                  </div>
+                </div>
+                <div className="pending-task-actions">
+                  <button
+                    type="button"
+                    className="btn-approve-task"
+                    onClick={(e) => { e.preventDefault(); approveTask(t.id); }}
+                  >
+                    ✓ Approve
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost btn-decline-task"
+                    onClick={(e) => { e.preventDefault(); rejectTask(t.id); }}
+                  >
+                    ✕ Decline
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className="grid">
         {(data?.team || []).map((p) => (
           <Link className="card person" to={`/hr/employee/${p.id}`} key={p.id}>

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 import config
-from models import Alert, Base, Heartbeat, User, WorkSession, engine
+from models import Alert, Base, Heartbeat, User, WorkSession, TaskRequest, engine
 
 
 def utc_now() -> datetime:

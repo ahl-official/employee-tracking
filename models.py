@@ -26,6 +26,7 @@ class User(Base):
     heartbeats: Mapped[list["Heartbeat"]] = relationship(back_populates="user")
     alerts: Mapped[list["Alert"]] = relationship(back_populates="user")
     sessions: Mapped[list["WorkSession"]] = relationship(back_populates="user")
+    task_requests: Mapped[list["TaskRequest"]] = relationship(foreign_keys="TaskRequest.user_id", back_populates="user")
 
 
 class Heartbeat(Base):
@@ -67,5 +68,26 @@ class WorkSession(Base):
     user: Mapped[User] = relationship(back_populates="sessions")
 
 
+class TaskRequest(Base):
+    __tablename__ = "task_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    reason: Mapped[str] = mapped_column(String(200))
+    location: Mapped[str] = mapped_column(String(100), default="")
+    expected_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, approved, rejected, completed
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approver_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[str] = mapped_column(String(200), default="")
+
+    user: Mapped[User] = relationship("User", foreign_keys=[user_id], back_populates="task_requests")
+    approver: Mapped[User | None] = relationship("User", foreign_keys=[approver_id])
+
+
 engine = create_engine(config.DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+

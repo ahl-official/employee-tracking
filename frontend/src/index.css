@@ -855,3 +855,322 @@ button.linkish {
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
 }
+
+/* --- Task / Room Movement Feature Styles --- */
+.badge.task {
+  background: #6366f1;
+  color: #fff;
+}
+
+.btn-task-trigger {
+  background: #f5f3ef;
+  color: #3b352e;
+  border: 1px solid #dcd4c7;
+  font-weight: 600;
+  font-size: 0.88rem;
+  padding: 0.55rem 0.95rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-task-trigger:hover {
+  background: #eae4d8;
+  border-color: #cbbfaf;
+  transform: translateY(-1px);
+}
+
+.task-active-callout {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+}
+.task-pending-callout {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+}
+.task-banner-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.task-pulse-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #6366f1;
+  box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7);
+  animation: taskPulse 1.8s infinite;
+  flex-shrink: 0;
+}
+@keyframes taskPulse {
+  0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7); }
+  70% { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}
+.task-hourglass {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+.task-title {
+  font-size: 0.95rem;
+  color: #1e1b4b;
+}
+.task-loc {
+  color: #4338ca;
+  font-weight: 500;
+}
+.task-subtext {
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-top: 0.15rem;
+}
+.btn-back-desk {
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.btn-back-desk:hover:not(:disabled) {
+  background: #4338ca;
+  transform: translateY(-1px);
+}
+.btn-cancel-task {
+  font-size: 0.82rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* Task Modal Dialog */
+.task-modal {
+  max-width: 520px;
+  width: 90%;
+  background: #fff;
+  border-radius: 14px;
+  padding: 1.25rem 1.4rem;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+}
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+.modal-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  color: #888;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+}
+.modal-close:hover { color: #222; }
+.task-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #374151;
+}
+.field-label input,
+.field-label select {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.field-label input:focus,
+.field-label select:focus {
+  border-color: #6366f1;
+}
+.task-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.preset-label {
+  font-size: 0.78rem;
+  color: #6b7280;
+  margin-right: 0.2rem;
+}
+.preset-pill {
+  font-size: 0.78rem;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  color: #374151;
+  padding: 0.25rem 0.55rem;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.preset-pill:hover {
+  background: #e5e7eb;
+}
+.preset-pill.selected {
+  background: #e0e7ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+  font-weight: 600;
+}
+.form-row-2 {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 0.75rem;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #f3f4f6;
+}
+.error-banner {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+/* Pending Approvals Card in Live.jsx */
+.pending-tasks-card {
+  margin-bottom: 1rem;
+  background: #fff;
+  border: 1px solid #e0e7ff;
+  border-left: 4px solid #6366f1;
+}
+.pending-tasks-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+.pending-tasks-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #1e1b4b;
+}
+.badge-pending-count {
+  background: #ede9fe;
+  color: #5b21b6;
+  font-weight: 700;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+}
+.pending-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.pending-task-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.65rem 0.85rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.pending-emp-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+.pending-emp-name {
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+.pending-dept {
+  font-size: 0.8rem;
+  color: #64748b;
+}
+.pending-task-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+  font-size: 0.84rem;
+}
+.pending-tag {
+  background: #ede9fe;
+  color: #4338ca;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.pending-loc {
+  color: #475569;
+}
+.pending-duration {
+  color: #475569;
+  font-weight: 500;
+}
+.pending-time {
+  font-size: 0.78rem;
+}
+.pending-task-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+.btn-approve-task {
+  background: #16a34a;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-approve-task:hover {
+  background: #15803d;
+  transform: translateY(-1px);
+}
+.btn-decline-task {
+  font-size: 0.82rem;
+  padding: 0.45rem 0.75rem;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+}
+.btn-decline-task:hover {
+  background: #fef2f2;
+}
