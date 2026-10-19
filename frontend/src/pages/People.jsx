@@ -113,8 +113,7 @@ export default function People() {
         <div>
           <h1>People</h1>
           <p className="muted">
-            Add employees here, or they can create their own account from the sign-in page. Reset login only changes the
-            website password — the Windows agent on their PC keeps working.
+            Add employees here, or they can create their own account from the sign-in page. Reset login updates the employee's portal password.
           </p>
         </div>
       </header>
@@ -163,15 +162,14 @@ export default function People() {
                   <td>{p.department}</td>
                   <td>
                     {p.role === "employee" ? (
-                      <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                        <button type="button" className="linkish" onClick={() => openReset(p)}>
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        <button type="button" className="btn-action" onClick={() => openReset(p)}>
                           Reset login
                         </button>
                         <button
                           type="button"
-                          className="linkish"
+                          className="btn-action btn-danger"
                           onClick={() => deletePerson(p)}
-                          style={{ color: "#ef4444", fontWeight: 500 }}
                           title={`Delete employee ${p.name}`}
                         >
                           Delete

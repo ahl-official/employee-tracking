@@ -33,34 +33,8 @@ export default function Desk() {
   const [enrolling, setEnrolling] = useState(false);
   const [cameras, setCameras] = useState([]);
   const [cameraId, setCameraId] = useState(() => localStorage.getItem("desktrack_camera_id") || "");
-  const [downloadingLauncher, setDownloadingLauncher] = useState(false);
   const cameraIdRef = useRef(cameraId);
   cameraIdRef.current = cameraId;
-
-  const downloadLauncher = async () => {
-    setDownloadingLauncher(true);
-    try {
-      const res = await fetch("/api/employee/download-launcher", {
-        credentials: "include",
-      });
-      if (!res.ok) {
-        throw new Error("Failed to generate custom setup script.");
-      }
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", "Connect-DeskTrack.ps1");
-      document.body.appendChild(link);
-      link.click();
-      link.parentNode.removeChild(link);
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      alert("Error generating the auto-installer file: " + (err.message || err));
-    } finally {
-      setDownloadingLauncher(false);
-    }
-  };
 
 
 
@@ -460,9 +434,7 @@ export default function Desk() {
   let callout = "Clocked out. Click Clock in — the browser will ask to use your camera. Click Allow.";
   let calloutOk = false;
   if (p?.clocked_in && camOn) {
-    callout = p?.agent_apps
-      ? "Camera is on for face/presence. Windows agent is sending desktop apps. Keep this tab open."
-      : "Camera is on. Keep this tab open while you work. Clock out to turn it off. Video is not saved.";
+    callout = "Camera is on for desk & presence tracking. Keep this browser tab open while you work. Clock out to turn it off.";
     calloutOk = true;
   } else if (p?.clocked_in) {
     callout = "You are clocked in. Click Clock in again if the camera is not showing, and Allow access.";
@@ -613,51 +585,10 @@ export default function Desk() {
             </p>
             <p className="now-ago">{ago(p?.updated)}</p>
           </article>
-          <article className="card connect-card">
-            <div className="connect-head">
-              <h2>Desktop Workstation</h2>
-              {p?.agent_apps ? (
-                <span className="badge-connected">● Connected</span>
-              ) : (
-                <span className="badge-not-connected">Not connected</span>
-              )}
-            </div>
-            <p className="hint">
-              {p?.agent_apps
-                ? "Windows agent is active in the background. Active work apps (Figma, Cursor, etc.) are being tracked."
-                : "To track desktop apps without manual setups, download your 1-click personal launcher script."}
-            </p>
-            <button
-              type="button"
-              className="btn-download-launcher"
-              onClick={downloadLauncher}
-              disabled={downloadingLauncher}
-            >
-              {downloadingLauncher
-                ? "Preparing custom script…"
-                : p?.agent_apps
-                ? "📥 Re-download Setup Script"
-                : "📥 Download 1-Click Setup Script"}
-            </button>
-            {!p?.agent_apps && (
-              <div className="setup-help">
-                <p className="hint" style={{ margin: "0.2rem 0 0.3rem", fontSize: "0.8rem", fontWeight: 600 }}>
-                  Self-serve 2-step setup:
-                </p>
-                <ol className="setup-steps">
-                  <li>Click the button above to download <code>Connect-DeskTrack.ps1</code>.</li>
-                  <li>Right-click the downloaded file $\rightarrow$ select <strong>Run with PowerShell</strong>.</li>
-                </ol>
-              </div>
-            )}
-          </article>
           <article className="card apps-card">
-            <h2>Apps today</h2>
+            <h2>Activity today</h2>
             <p className="hint apps-hint">
-              {p?.agent_apps
-                ? "Windows agent is connected — desktop apps are updating live."
-                : "Windows agent not detected on this PC. Use the setup script above to connect in 1 click."}{" "}
-              Face comes from this browser camera.
+              Browser activity and desk presence while clocked in.
             </p>
             <ul className="apps">
               {(today.apps || []).length ? (
@@ -669,11 +600,7 @@ export default function Desk() {
                 ))
               ) : (
                 <li>
-                  {p?.clocked_in
-                    ? p?.agent_apps
-                      ? "Waiting for app samples…"
-                      : "No apps yet — start the DeskTrack Agent on this PC, then keep Clock in."
-                    : "Clock in to start tracking apps."}
+                  {p?.clocked_in ? "Tracking activity…" : "Clock in to start tracking."}
                 </li>
               )}
             </ul>
