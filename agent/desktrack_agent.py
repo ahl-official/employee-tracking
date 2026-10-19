@@ -45,6 +45,27 @@ def log(msg: str) -> None:
         pass
 
 
+def handle_auto_config() -> None:
+    """Read server_url, username, password from command-line arguments and save config.ini."""
+    if len(sys.argv) > 3:
+        server_url = sys.argv[1].strip().rstrip("/")
+        username = sys.argv[2].strip()
+        agent_password = sys.argv[3].strip()
+
+        cfg = configparser.ConfigParser()
+        cfg["server"] = {"url": server_url}
+        cfg["auth"] = {"username": username, "password": agent_password}
+        cfg["agent"] = {"camera_index": "0", "interval_seconds": "2.0", "auto_clock_in": "true"}
+
+        config_path = ROOT / "config.ini"
+        with open(config_path, "w", encoding="utf-8") as f:
+            cfg.write(f)
+
+        log(f"Configuration deployed successfully for {username} -> {server_url}")
+        print("Configuration deployed successfully.")
+        sys.exit(0)
+
+
 def prevent_sleep(on: bool) -> None:
     if sys.platform != "win32":
         return
@@ -220,4 +241,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    handle_auto_config()
     main()

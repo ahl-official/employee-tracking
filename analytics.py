@@ -221,14 +221,30 @@ def open_session(db, user_id: int) -> WorkSession | None:
 
 
 def close_overnight_sessions(db, user_id: int | None = None) -> None:
-    """Clock out leftover sessions at local midnight so a new day starts clean."""
+    """Clock out leftover sessions so past days do not stretch overnight into hours of fake idle."""
     start, _ = day_range()
     q = db.query(WorkSession).filter(WorkSession.clock_out.is_(None))
     if user_id is not None:
         q = q.filter(WorkSession.user_id == user_id)
     for row in q.all():
-        if as_dt(row.clock_in) is not None and as_dt(row.clock_in) < start:
-            row.clock_out = start
+        cin = as_dt(row.clock_in)
+        if cin is not None and cin < start:
+            # Find the user's last heartbeat for that session before start of current day
+            last_hb = (
+                db.query(Heartbeat.created_at)
+                .filter(
+                    Heartbeat.user_id == row.user_id,
+                    Heartbeat.created_at >= cin,
+                    Heartbeat.created_at < start,
+                )
+                .order_by(Heartbeat.created_at.desc())
+                .first()
+            )
+            if last_hb and last_hb[0]:
+                last_dt = as_dt(last_hb[0])
+                row.clock_out = min(last_dt + timedelta(minutes=5), start)
+            else:
+                row.clock_out = min(cin + timedelta(minutes=30), start)
 
 
 def auto_clock_in_if_needed(db, user_id: int) -> bool:
@@ -259,7 +275,7 @@ def session_intervals(
     day_end: datetime,
     now: datetime | None = None,
 ) -> list[tuple[datetime, datetime]]:
-    """Clock-in → clock-out ranges for this day (open session capped at now)."""
+    """Clock-in → clock-out ranges for this day (open session capped at now or last activity)."""
     now = now or datetime.now(timezone.utc)
     rows = (
         db.query(WorkSession)
@@ -275,7 +291,44 @@ def session_intervals(
         cin = as_dt(row.clock_in)
         if cin is None:
             continue
-        cout = as_dt(row.clock_out) if row.clock_out is not None else min(now, day_end)
+        if row.clock_out is not None:
+            cout = as_dt(row.clock_out)
+            # If clock_out was artificially closed at midnight/day_end for a past day,
+            # trim it to the employee's actual last recorded activity.
+            if cout >= day_end and day_end <= now:
+                last_hb = (
+                    db.query(Heartbeat.created_at)
+                    .filter(
+                        Heartbeat.user_id == user_id,
+                        Heartbeat.created_at >= cin,
+                        Heartbeat.created_at < day_end,
+                    )
+                    .order_by(Heartbeat.created_at.desc())
+                    .first()
+                )
+                if last_hb and last_hb[0]:
+                    last_hb_dt = as_dt(last_hb[0])
+                    if (day_end - last_hb_dt).total_seconds() > 1800:
+                        cout = min(last_hb_dt + timedelta(minutes=5), day_end)
+        else:
+            # Open session: if past day left unclosed, cap at last activity
+            if day_end <= now:
+                last_hb = (
+                    db.query(Heartbeat.created_at)
+                    .filter(
+                        Heartbeat.user_id == user_id,
+                        Heartbeat.created_at >= cin,
+                        Heartbeat.created_at < day_end,
+                    )
+                    .order_by(Heartbeat.created_at.desc())
+                    .first()
+                )
+                if last_hb and last_hb[0]:
+                    cout = min(as_dt(last_hb[0]) + timedelta(minutes=5), day_end)
+                else:
+                    cout = min(cin + timedelta(minutes=30), day_end)
+            else:
+                cout = min(now, day_end)
         # Session must overlap this calendar day
         a = max(cin, day_start)
         b = min(cout, day_end)
@@ -399,24 +452,14 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
 
     # Seated = face visible while clocked in (with 7m hold).
     # Idle = clocked-in time with no face (away, lock, sleep, no camera, long gap).
-    # Seated + Idle = 9 hours standard day, or until clock out if overtime (OT).
-    has_open_session = open_session(db, user_id) is not None
+    # Bounded strictly to the time between Clock In and Clock Out.
     if not intervals or elapsed <= 0:
         seated_s = 0.0
         idle_s = 0.0
         presence = 0
         total_clocked = 0.0
     else:
-        if elapsed >= workday_full:
-            # Overtime: count full elapsed time until clock out
-            total_clocked = elapsed
-        elif has_open_session:
-            # Live session in progress
-            total_clocked = elapsed
-        else:
-            # Day completed / clocked out: partition standard 9h workday
-            total_clocked = max(elapsed, workday_full)
-
+        total_clocked = elapsed
         seated_s = min(float(seated), total_clocked)
         idle_s = max(0.0, total_clocked - seated_s)
         presence = int(round(100.0 * seated_s / total_clocked)) if total_clocked > 0 else 0

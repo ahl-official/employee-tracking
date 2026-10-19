@@ -1,13 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { Badge } from "../components/Badge";
 
 export default function Employee() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [p, setP] = useState(null);
   const [feed, setFeed] = useState("");
   const wrapRef = useRef(null);
+
+  async function deleteThisEmployee() {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete employee "${p?.name || "this employee"}"?\n\nThis will permanently delete their account and all tracking history.`
+      )
+    ) {
+      return;
+    }
+    const { ok, data } = await api(`/api/people/${id}`, { method: "DELETE" });
+    if (ok) {
+      navigate("/hr/people");
+    } else {
+      alert(data.error || "Failed to delete employee.");
+    }
+  }
 
   const refresh = useCallback(async () => {
     const { ok, data } = await api(`/api/employee/${id}`);
@@ -73,6 +90,16 @@ export default function Employee() {
           <p className="muted">
             {p?.department || ""} · today’s live desk view, seated time, and apps. Past days are on Daily report.
           </p>
+        </div>
+        <div>
+          <button
+            type="button"
+            className="ghost"
+            onClick={deleteThisEmployee}
+            style={{ color: "#ef4444", borderColor: "#fca5a5" }}
+          >
+            🗑 Delete employee
+          </button>
         </div>
       </header>
       <div className="kpis">

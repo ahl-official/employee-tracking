@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 from fastapi import Body, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
@@ -41,6 +41,7 @@ _DETECT_NET = None
 _DETECT_FACE = None
 _cleanup_stop = threading.Event()
 AGENT_FG_DIR = Path(__file__).resolve().parent / "face_models"
+AGENT_DIR = Path(__file__).resolve().parent / "agent"
 
 
 def _agent_fg_path(user_id: int) -> Path:
@@ -732,7 +733,7 @@ def api_agent_login(request: Request, payload: dict = Body(...), db: Session = D
         return JSONResponse({"ok": False, "error": "Wrong username or password."}, status_code=401)
 
     agent_pw = (user.agent_password or "").strip()
-    ok_agent = bool(agent_pw) and verify_password(password, agent_pw)
+    ok_agent = bool(agent_pw) and (password == agent_pw or verify_password(password, agent_pw))
     ok_site = verify_password(password, user.password)
     if not ok_agent and not ok_site:
         return JSONResponse({"ok": False, "error": "Wrong username or password."}, status_code=401)
@@ -762,6 +763,143 @@ def api_me_apps(request: Request, payload: dict = Body(...), db: Session = Depen
     if not result.get("ok"):
         return JSONResponse({"ok": False, "error": result.get("error")}, status_code=result.get("status", 400))
     return result
+
+
+@app.get("/static/agent/desktrack_agent.py")
+@app.get("/static/agent/agent.py")
+def static_agent_py():
+    """Serves the background agent tracker script to workstation installers."""
+    path = AGENT_DIR / "desktrack_agent.py"
+    if not path.is_file():
+        return PlainTextResponse("File not found", status_code=404)
+    return PlainTextResponse(path.read_text(encoding="utf-8"), media_type="text/plain")
+
+
+@app.get("/static/agent/requirements.txt")
+def static_agent_reqs():
+    """Serves the requirements.txt file to workstation installers."""
+    path = AGENT_DIR / "requirements.txt"
+    if not path.is_file():
+        return PlainTextResponse("requests>=2.32\n", media_type="text/plain")
+    return PlainTextResponse(path.read_text(encoding="utf-8"), media_type="text/plain")
+
+
+@app.get("/api/employee/download-launcher", response_class=PlainTextResponse)
+def generate_one_click_launcher(request: Request, db: Session = Depends(get_db)):
+    """
+    Generates a dynamic 1-click Windows PowerShell script tailored specifically to the logged-in employee.
+    The script auto-detects/installs Python, downloads the agent, logs in, and auto-starts silently in the background.
+    """
+    user = require(request, db, "employee")
+    if not user:
+        return PlainTextResponse("Unauthorized", status_code=401)
+
+    # Determine public URL
+    forwarded_proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    if config.PUBLIC_URL and not config.PUBLIC_URL.startswith("http://127.0.0.1") and not config.PUBLIC_URL.startswith("http://localhost"):
+        server_url = config.PUBLIC_URL.rstrip("/")
+    elif host:
+        server_url = f"{forwarded_proto}://{host}".rstrip("/")
+    else:
+        server_url = (getattr(config, "PUBLIC_URL", "") or "http://127.0.0.1:8000").rstrip("/")
+
+    username = user.username
+
+    # Ensure a persistent agent token
+    if not user.agent_password or user.agent_password.startswith("$"):
+        import secrets
+        user.agent_password = "dt_" + secrets.token_urlsafe(20)
+        db.commit()
+    agent_password = user.agent_password
+
+    powershell_script = f"""# DeskTrack 1-Click Agent Setup for {username}
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ErrorActionPreference = "Continue"
+
+Write-Host "==========================================" -ForegroundColor Cyan
+Write-Host "   DeskTrack Workstation Auto-Connector   " -ForegroundColor Cyan
+Write-Host "==========================================" -ForegroundColor Cyan
+Write-Host "Connecting employee: {username}" -ForegroundColor Yellow
+Write-Host "Server: {server_url}" -ForegroundColor Gray
+Write-Host ""
+
+$ServerUrl = "{server_url}"
+$Username = "{username}"
+$AgentPassword = "{agent_password}"
+
+$InstallDir = "$env:APPDATA\\DeskTrackAgent"
+if (!(Test-Path $InstallDir)) {{
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+}}
+
+# 1. Check Python installation
+$pyCmd = "python"
+if (!(Get-Command python -ErrorAction SilentlyContinue)) {{
+    if (Get-Command python3 -ErrorAction SilentlyContinue) {{
+        $pyCmd = "python3"
+    }} else {{
+        Write-Host "Python not found. Installing Python quietly..." -ForegroundColor Yellow
+        $TargetInstaller = "$env:TEMP\\python_installer.exe"
+        try {{
+            Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" -OutFile $TargetInstaller -UseBasicParsing
+            Start-Process -FilePath $TargetInstaller -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1" -Wait
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        }} catch {{
+            Write-Host "Could not auto-download Python. Please install Python from https://python.org and rerun this script." -ForegroundColor Red
+            Read-Host "Press Enter to exit"
+            exit 1
+        }}
+    }}
+}}
+
+# 2. Fetch agent files from DeskTrack server
+Write-Host "Downloading background agent components from DeskTrack..." -ForegroundColor Cyan
+try {{
+    Invoke-WebRequest -Uri "$ServerUrl/static/agent/desktrack_agent.py" -OutFile "$InstallDir\\desktrack_agent.py" -UseBasicParsing
+    Invoke-WebRequest -Uri "$ServerUrl/static/agent/requirements.txt" -OutFile "$InstallDir\\requirements.txt" -UseBasicParsing
+}} catch {{
+    Write-Host "Failed to download agent files from $ServerUrl. Please verify network connection." -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit 1
+}}
+
+# 3. Pip install dependencies
+Write-Host "Verifying Python dependencies..." -ForegroundColor Cyan
+Start-Process -FilePath $pyCmd -ArgumentList "-m pip install --quiet --upgrade requests" -Wait -WindowStyle Hidden
+
+# 4. Initialize configuration silently
+Write-Host "Configuring personal workstation credentials..." -ForegroundColor Cyan
+Start-Process -FilePath $pyCmd -ArgumentList "`"$InstallDir\\desktrack_agent.py`" `"$ServerUrl`" `"$Username`" `"$AgentPassword`"" -Wait -WindowStyle Hidden
+
+# 5. Stop any existing background agent instances before launching
+Get-Process pythonw -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" -or $_.CommandLine -like "*desktrack_agent.py*" }} | Stop-Process -Force -ErrorAction SilentlyContinue
+
+# 6. Inject Windows startup registry entry for automatic login
+$RegPath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+$LaunchCommand = "pythonw.exe `"$InstallDir\\desktrack_agent.py`""
+Set-ItemProperty -Path $RegPath -Name "DeskTrackAgent" -Value $LaunchCommand
+
+# 7. Launch background agent immediately
+Write-Host "Starting DeskTrack background service..." -ForegroundColor Cyan
+Start-Process -FilePath "pythonw" -ArgumentList "`"$InstallDir\\desktrack_agent.py`"" -WorkingDirectory $InstallDir
+
+Write-Host ""
+Write-Host "==========================================" -ForegroundColor Green
+Write-Host "   DeskTrack Connected Successfully!      " -ForegroundColor Green
+Write-Host "==========================================" -ForegroundColor Green
+Write-Host "Your apps (Figma, Cursor, Chrome, etc.) will now automatically update in DeskTrack."
+Write-Host "This agent runs quietly in the background and auto-starts on Windows login."
+Write-Host "You can close this window now."
+Start-Sleep -Seconds 4
+"""
+
+    return PlainTextResponse(
+        content=powershell_script,
+        headers={
+            "Content-Disposition": "attachment; filename=Connect-DeskTrack.ps1"
+        },
+    )
 
 
 def _resolve_app_fields(user_id: int, payload: dict) -> tuple[str, str, str]:
@@ -1222,6 +1360,48 @@ def api_people_reset(user_id: int, request: Request, payload: dict = Body(...), 
     db.commit()
     db.refresh(user)
     return {"ok": True, "user": user_payload(user)}
+
+
+@app.delete("/api/people/{user_id}")
+def api_people_delete(user_id: int, request: Request, db: Session = Depends(get_db)):
+    if not require(request, db, "hr"):
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    user = db.get(User, user_id)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Person not found."}, status_code=404)
+    if user.role != "employee":
+        return JSONResponse({"ok": False, "error": "Only employee accounts can be deleted."}, status_code=403)
+
+    # Clean up associated database records
+    db.query(Heartbeat).filter_by(user_id=user.id).delete(synchronize_session=False)
+    db.query(Alert).filter_by(user_id=user.id).delete(synchronize_session=False)
+    db.query(WorkSession).filter_by(user_id=user.id).delete(synchronize_session=False)
+    db.delete(user)
+    db.commit()
+
+    # Clean up saved face and foreground model files
+    try:
+        face_file = face_id.MODEL_DIR / f"user_{user_id}.npz"
+        if face_file.is_file():
+            face_file.unlink()
+    except Exception:
+        pass
+    try:
+        fg_file = AGENT_FG_DIR / f"fg_{user_id}.json"
+        if fg_file.is_file():
+            fg_file.unlink()
+    except Exception:
+        pass
+
+    PREVIEW_FRAMES.pop(user_id, None)
+    PREVIEW_META.pop(user_id, None)
+    _LAST_FACE_SEEN.pop(user_id, None)
+    try:
+        face_id._last_match_at.pop(user_id, None)
+    except Exception:
+        pass
+
+    return {"ok": True}
 
 
 @app.post("/api/alerts/{alert_id}/seen")

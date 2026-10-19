@@ -66,7 +66,6 @@ export default function Layout({ user, onLogout, children }) {
               Live board
             </NavLink>
             <NavLink to="/hr/reports">Daily report</NavLink>
-            <NavLink to="/hr/alerts">HR pings</NavLink>
             <NavLink to="/hr/people">People</NavLink>
             <NavLink to="/account">Account</NavLink>
             <a href="/hr/export.csv">Export CSV</a>

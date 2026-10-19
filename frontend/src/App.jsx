@@ -41,7 +41,7 @@ export default function App() {
                 <Routes>
                   <Route path="/hr" element={<Live />} />
                   <Route path="/hr/reports" element={<Reports />} />
-                  <Route path="/hr/alerts" element={<Alerts />} />
+                  <Route path="/hr/alerts" element={<Navigate to="/hr" replace />} />
                   <Route path="/hr/people" element={<People />} />
                   <Route path="/hr/employee/:id" element={<Employee />} />
                   <Route path="/account" element={<Account user={user} onUser={setUser} />} />

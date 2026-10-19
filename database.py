@@ -86,6 +86,7 @@ def init_db() -> None:
             if not (u.agent_password or "").strip() and u.password:
                 u.agent_password = u.password
         _rename_saniya(db)
+        _cleanup_stretched_work_sessions(db)
         for row in db.query(User).filter(User.on_break.is_(True)).all():
             row.on_break = False
         db.commit()
@@ -104,6 +105,35 @@ def _rename_saniya(db: Session) -> None:
     if saniya:
         saniya.name = "Saniya"
         db.commit()
+
+
+def _cleanup_stretched_work_sessions(db: Session) -> None:
+    """Trim old sessions whose clock_out was artificially set to midnight or far after last heartbeat."""
+    from datetime import timedelta
+    from models import WorkSession, Heartbeat
+    import analytics
+
+    rows = db.query(WorkSession).filter(WorkSession.clock_out.isnot(None)).all()
+    for row in rows:
+        cin = analytics.as_dt(row.clock_in)
+        cout = analytics.as_dt(row.clock_out)
+        if not cin or not cout or cout <= cin:
+            continue
+        last_hb = (
+            db.query(Heartbeat.created_at)
+            .filter(
+                Heartbeat.user_id == row.user_id,
+                Heartbeat.created_at >= cin,
+                Heartbeat.created_at <= cout + timedelta(minutes=5),
+            )
+            .order_by(Heartbeat.created_at.desc())
+            .first()
+        )
+        if last_hb and last_hb[0]:
+            last_hb_dt = analytics.as_dt(last_hb[0])
+            # If clock_out is more than 30 minutes after the last heartbeat, trim it to last_hb + 5 minutes
+            if (cout - last_hb_dt).total_seconds() > 1800:
+                row.clock_out = last_hb_dt + timedelta(minutes=5)
 
 
 

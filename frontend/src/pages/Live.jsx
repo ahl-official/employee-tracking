@@ -97,18 +97,6 @@ export default function Live() {
           <strong>{c.offline || 0}</strong>
         </div>
       </div>
-      <div className="alerts">
-        {unseen.map((a) => (
-          <div className="alert" key={a.id}>
-            <div>
-              <strong>HR ping</strong> {a.message}
-            </div>
-            <button type="button" onClick={() => ack(a.id)}>
-              Got it
-            </button>
-          </div>
-        ))}
-      </div>
       <div className="grid">
         {(data?.team || []).map((p) => (
           <Link className="card person" to={`/hr/employee/${p.id}`} key={p.id}>

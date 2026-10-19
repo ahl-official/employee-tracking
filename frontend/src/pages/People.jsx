@@ -54,6 +54,25 @@ export default function People() {
     setResetForm({ username: "", password: "emp123" });
   }
 
+  async function deletePerson(person) {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete employee "${person.name}" (@${person.username})?\n\nThis will permanently delete their account, face model, work sessions, and tracking history.`
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setOkMsg("");
+    const { ok, data } = await api(`/api/people/${person.id}`, { method: "DELETE" });
+    if (!ok) {
+      setError(data.error || "Could not delete that person.");
+      return;
+    }
+    setOkMsg(`Deleted employee "${person.name}".`);
+    load();
+  }
+
   async function submitReset(e) {
     e.preventDefault();
     setError("");
@@ -144,9 +163,20 @@ export default function People() {
                   <td>{p.department}</td>
                   <td>
                     {p.role === "employee" ? (
-                      <button type="button" className="linkish" onClick={() => openReset(p)}>
-                        Reset login
-                      </button>
+                      <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                        <button type="button" className="linkish" onClick={() => openReset(p)}>
+                          Reset login
+                        </button>
+                        <button
+                          type="button"
+                          className="linkish"
+                          onClick={() => deletePerson(p)}
+                          style={{ color: "#ef4444", fontWeight: 500 }}
+                          title={`Delete employee ${p.name}`}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     ) : null}
                   </td>
                 </tr>
