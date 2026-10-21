@@ -58,7 +58,7 @@
   2. **Outbound Dispatch:** When an employee submits a `TaskRequest`, DeskTrack invokes `WAHA /api/sendText` delivering a formatted notification to the assigned Lead/HR phone number.
   3. **1-Tap Approval Link:** Include HMAC-signed quick links (`/api/tasks/{id}/quick-approve?token=...` and `quick-reject`) allowing Leads to instantly approve/reject directly from WhatsApp without needing to log into the dashboard first.
   4. **Optional Inbound Webhook:** Support WAHA incoming message webhook (`/api/webhooks/waha`) so Leads can also simply reply with `APPROVE <id>` or `REJECT <id>`.
-  5. **Desk Real-Time Sync:** Once approved, the employee's Desk status updates immediately to `Active Task` and counts as official productive time.
-- **Files Affected:** `docker-compose.yml`, `config.py`, `models.py`, `main.py`, `DECISIONS.md`.
+  6. **Static Code Verification:** Verified with `pyflakes` to ensure all imports (including `timezone`, `re`, `waha`) and dependencies are strictly defined across all application modules.
+- **Files Affected:** `docker-compose.yml`, `Dockerfile`, `requirements.txt`, `config.py`, `models.py`, `main.py`, `waha.py`, `DECISIONS.md`.
 
 
