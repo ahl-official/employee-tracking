@@ -22,15 +22,18 @@ import cv2
 import numpy as np
 from fastapi import Body, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
+
+import re
 
 import analytics
 import config
 import detector
 import face_id
+import waha
 from database import init_db, purge_old_data, utc_now
 from models import Alert, Base, Heartbeat, SessionLocal, User, WorkSession, TaskRequest, engine
 
@@ -1526,13 +1529,25 @@ def api_tasks_request(request: Request, payload: dict = Body(...), db: Session =
         )
         db.add(task)
 
-        # Notify HR
+        # Notify HR via in-app alert
         loc_str = f" in {location}" if location else ""
         alert_msg = f"{user.name} requested away on task: {reason}{loc_str} ({expected_minutes}m)"
         db.add(Alert(user_id=user.id, message=alert_msg, created_at=now, seen=False))
 
         db.commit()
         db.refresh(task)
+
+        # Trigger WhatsApp notification to Lead via WAHA
+        waha.notify_lead_task_request_async(
+            task_id=task.id,
+            employee_name=user.name,
+            department=user.department or "",
+            reason=task.reason,
+            location=task.location or "",
+            expected_minutes=task.expected_minutes,
+            requested_at=task.requested_at,
+        )
+
         return {
             "ok": True,
             "task": {
@@ -1631,7 +1646,7 @@ def api_tasks_pending(request: Request, db: Session = Depends(get_db)):
 
 @app.post("/api/tasks/{task_id}/approve")
 def api_tasks_approve(task_id: int, request: Request, db: Session = Depends(get_db)):
-    """Lead / HR approves a task request."""
+    """Lead / HR approves a task request via dashboard."""
     hr_user = require(request, db, "hr")
     if not hr_user:
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
@@ -1650,6 +1665,8 @@ def api_tasks_approve(task_id: int, request: Request, db: Session = Depends(get_
         task.approver_id = hr_user.id
         task.reviewed_at = now
         db.commit()
+        if task.user:
+            waha.notify_task_resolution_async(task.id, task.user.name, "approved")
         return {"ok": True}
     except Exception as exc:
         db.rollback()
@@ -1658,7 +1675,7 @@ def api_tasks_approve(task_id: int, request: Request, db: Session = Depends(get_
 
 @app.post("/api/tasks/{task_id}/reject")
 def api_tasks_reject(task_id: int, request: Request, payload: dict = Body({}), db: Session = Depends(get_db)):
-    """Lead / HR rejects a task request."""
+    """Lead / HR rejects a task request via dashboard."""
     hr_user = require(request, db, "hr")
     if not hr_user:
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
@@ -1677,10 +1694,206 @@ def api_tasks_reject(task_id: int, request: Request, payload: dict = Body({}), d
         task.reviewed_at = now
         task.rejection_reason = str(payload.get("reason") or "Declined by lead").strip()
         db.commit()
+        if task.user:
+            waha.notify_task_resolution_async(task.id, task.user.name, "rejected")
         return {"ok": True}
     except Exception as exc:
         db.rollback()
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+def waha_action_html(title: str, message: str, success: bool) -> str:
+    """Clean mobile-friendly HTML confirmation screen for WhatsApp 1-tap approvals."""
+    color = "#10b981" if success else "#ef4444"
+    bg_color = "#f0fdf4" if success else "#fef2f2"
+    border_color = "#bbf7d0" if success else "#fecaca"
+    icon = (
+        """<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>"""
+        if success
+        else """<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>"""
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title} — DeskTrack</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f8fafc;
+      color: #1e293b;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }}
+    .card {{
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 2.25rem 1.75rem;
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+    }}
+    .icon-wrapper {{
+      width: 76px;
+      height: 76px;
+      border-radius: 50%;
+      background: {bg_color};
+      border: 1px solid {border_color};
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.25rem;
+    }}
+    h1 {{ font-size: 1.35rem; font-weight: 700; color: #0f172a; margin-bottom: 0.75rem; }}
+    p {{ font-size: 0.95rem; line-height: 1.55; color: #475569; margin-bottom: 1.5rem; }}
+    .btn {{
+      display: inline-block;
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: #0f172a;
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 600;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      transition: background 0.15s ease;
+    }}
+    .btn:hover {{ background: #1e293b; }}
+    .footer {{ margin-top: 1.25rem; font-size: 0.78rem; color: #94a3b8; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon-wrapper">{icon}</div>
+    <h1>{title}</h1>
+    <p>{message}</p>
+    <a href="{config.PUBLIC_URL}" class="btn">Open DeskTrack</a>
+    <div class="footer">DeskTrack Automated Movement System</div>
+  </div>
+</body>
+</html>"""
+
+
+@app.get("/api/tasks/{task_id}/quick-approve", response_class=HTMLResponse)
+def api_tasks_quick_approve(task_id: int, token: str = "", db: Session = Depends(get_db)):
+    """1-Click instant approval link clicked by Lead from WhatsApp."""
+    if not waha.verify_task_token(task_id, "approve", token):
+        return HTMLResponse(waha_action_html("Invalid or Expired Link", "This approval link is invalid or has expired.", False), status_code=403)
+
+    Base.metadata.create_all(bind=db.get_bind())
+    task = db.get(TaskRequest, task_id)
+    if not task:
+        return HTMLResponse(waha_action_html("Task Not Found", "The requested task could not be found.", False), status_code=404)
+
+    emp_name = task.user.name if task.user else "Employee"
+    if task.status == "approved":
+        return HTMLResponse(waha_action_html("Already Approved", f"This movement request for <b>{emp_name}</b> was already approved earlier.", True))
+    if task.status != "pending":
+        return HTMLResponse(waha_action_html("Request Unavailable", f"This request is already marked as <b>{task.status}</b>.", False))
+
+    now = datetime.now(timezone.utc)
+    task.status = "approved"
+    task.started_at = now
+    task.reviewed_at = now
+    db.commit()
+
+    waha.notify_task_resolution_async(task.id, emp_name, "approved")
+    return HTMLResponse(waha_action_html(
+        "Movement Request Approved",
+        f"<b>{emp_name}</b> is approved for <b>{task.expected_minutes} mins</b> ({task.reason}) in <b>{task.location or 'other room'}</b>.<br><br>Their time is now credited as official productive work.",
+        True,
+    ))
+
+
+@app.get("/api/tasks/{task_id}/quick-reject", response_class=HTMLResponse)
+def api_tasks_quick_reject(task_id: int, token: str = "", db: Session = Depends(get_db)):
+    """1-Click instant rejection link clicked by Lead from WhatsApp."""
+    if not waha.verify_task_token(task_id, "reject", token):
+        return HTMLResponse(waha_action_html("Invalid or Expired Link", "This link is invalid or has expired.", False), status_code=403)
+
+    Base.metadata.create_all(bind=db.get_bind())
+    task = db.get(TaskRequest, task_id)
+    if not task:
+        return HTMLResponse(waha_action_html("Task Not Found", "The requested task could not be found.", False), status_code=404)
+
+    emp_name = task.user.name if task.user else "Employee"
+    if task.status != "pending":
+        return HTMLResponse(waha_action_html("Request Unavailable", f"This request is already marked as <b>{task.status}</b>.", False))
+
+    now = datetime.now(timezone.utc)
+    task.status = "rejected"
+    task.reviewed_at = now
+    task.rejection_reason = "Declined via WhatsApp"
+    db.commit()
+
+    waha.notify_task_resolution_async(task.id, emp_name, "rejected")
+    return HTMLResponse(waha_action_html(
+        "Request Declined",
+        f"The movement request for <b>{emp_name}</b> has been declined.",
+        False,
+    ))
+
+
+@app.post("/api/webhooks/waha")
+async def api_waha_webhook(request: Request, db: Session = Depends(get_db)):
+    """Receives incoming WhatsApp messages from WAHA for interactive replies like 'APPROVE 15'."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+
+    event = body.get("event")
+    payload = body.get("payload") or {}
+
+    # Check for incoming message event
+    if event == "message" or "body" in payload:
+        text = str(payload.get("body") or "").strip()
+        from_phone = str(payload.get("from") or "")
+        sender_clean = waha.clean_phone_number(from_phone)
+        lead_clean = waha.clean_phone_number(config.LEAD_WHATSAPP_PHONE)
+
+        # If lead phone is configured, only accept commands from authorized lead
+        if lead_clean and sender_clean != lead_clean:
+            return {"ok": True, "ignored": "unauthorized sender"}
+
+        # Match command: e.g. "APPROVE 15" or "REJECT 15"
+        m = re.match(r"^(approve|accept|yes|ok|reject|decline|no)\s+(\d+)$", text, re.IGNORECASE)
+        if m:
+            cmd = m.group(1).lower()
+            task_id = int(m.group(2))
+            Base.metadata.create_all(bind=db.get_bind())
+            task = db.get(TaskRequest, task_id)
+            if not task:
+                waha.send_whatsapp_message(sender_clean, f"❌ Task #{task_id} not found.")
+                return {"ok": True}
+
+            emp_name = task.user.name if task.user else "Employee"
+            if task.status != "pending":
+                waha.send_whatsapp_message(sender_clean, f"ℹ️ Task #{task_id} for *{emp_name}* is already {task.status}.")
+                return {"ok": True}
+
+            now = datetime.now(timezone.utc)
+            if cmd in ("approve", "accept", "yes", "ok"):
+                task.status = "approved"
+                task.started_at = now
+                task.reviewed_at = now
+                db.commit()
+                waha.send_whatsapp_message(sender_clean, f"✅ Task #{task_id} for *{emp_name}* has been *APPROVED* ({task.expected_minutes}m).")
+            else:
+                task.status = "rejected"
+                task.reviewed_at = now
+                task.rejection_reason = "Declined via WhatsApp message"
+                db.commit()
+                waha.send_whatsapp_message(sender_clean, f"❌ Task #{task_id} for *{emp_name}* has been *DECLINED*.")
+
+    return {"ok": True}
 
 
 

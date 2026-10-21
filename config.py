@@ -94,6 +94,12 @@ TRACK_MIN_INTERVAL = float(os.getenv("TRACK_MIN_INTERVAL", "3"))
 HR_ALERT_WEBHOOK = os.getenv("HR_ALERT_WEBHOOK", "").strip()
 HR_ALERT_EMAIL = os.getenv("HR_ALERT_EMAIL", "").strip()
 
+# WAHA (WhatsApp HTTP API) Settings
+WAHA_API_URL = os.getenv("WAHA_API_URL", "").rstrip("/")
+WAHA_API_KEY = os.getenv("WAHA_API_KEY", "").strip()
+WAHA_SESSION = os.getenv("WAHA_SESSION", "default").strip()
+LEAD_WHATSAPP_PHONE = os.getenv("LEAD_WHATSAPP_PHONE", "").strip()
+
 WORK_START_HOUR = _int("WORK_START_HOUR", 9)
 WORK_END_HOUR = _int("WORK_END_HOUR", 19)
 # Daily seated + idle always partition this many seconds (default 9 hours)

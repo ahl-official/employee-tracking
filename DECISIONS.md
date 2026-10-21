@@ -48,3 +48,17 @@
   3. Update `api()` and `Desk.jsx` to parse and render explicit server errors (`data.error`, `data.detail`, or HTTP status) so error reasons are immediately transparent.
 - **Files Affected:** `main.py`, `frontend/src/api.js`, `frontend/src/pages/Desk.jsx`, `DECISIONS.md`.
 
+---
+
+## Decision 6: WhatsApp Movement & Task Approval Integration via WAHA
+- **Date:** 2026-10-21
+- **Problem:** Leads and managers may not always be actively viewing the DeskTrack dashboard when an employee steps away for a meeting, client call, or lab task. They need real-time mobile notifications via WhatsApp with one-tap approval.
+- **Decision:**
+  1. **Integration Engine:** Use **WAHA (WhatsApp HTTP API)**, a self-hosted lightweight REST API running as a companion Docker container on the VPS alongside DeskTrack.
+  2. **Outbound Dispatch:** When an employee submits a `TaskRequest`, DeskTrack invokes `WAHA /api/sendText` delivering a formatted notification to the assigned Lead/HR phone number.
+  3. **1-Tap Approval Link:** Include HMAC-signed quick links (`/api/tasks/{id}/quick-approve?token=...` and `quick-reject`) allowing Leads to instantly approve/reject directly from WhatsApp without needing to log into the dashboard first.
+  4. **Optional Inbound Webhook:** Support WAHA incoming message webhook (`/api/webhooks/waha`) so Leads can also simply reply with `APPROVE <id>` or `REJECT <id>`.
+  5. **Desk Real-Time Sync:** Once approved, the employee's Desk status updates immediately to `Active Task` and counts as official productive time.
+- **Files Affected:** `docker-compose.yml`, `config.py`, `models.py`, `main.py`, `DECISIONS.md`.
+
+
