@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # --- frontend build ---
 FROM node:20-alpine AS frontend
 WORKDIR /app/frontend
@@ -29,7 +27,7 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY analytics.py config.py database.py detector.py face_id.py main.py models.py passwords.py ./
+COPY analytics.py config.py database.py detector.py face_id.py main.py models.py passwords.py waha.py ./
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
 # Models download on first start if missing; optional pre-bake via volume

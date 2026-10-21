@@ -6,3 +6,4 @@ itsdangerous>=2.2
 opencv-python-headless>=4.12
 numpy>=2
 tzdata>=2025.1
+requests>=2.31.0
