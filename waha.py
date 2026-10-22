@@ -1,6 +1,6 @@
 """
 WAHA (WhatsApp HTTP API) Client for DeskTrack.
-Handles sending movement/task approval requests to Leads and processing 1-click approvals & webhooks.
+Handles sending movement/task approval requests to Leads via interactive buttons/polls (no links) and webhooks.
 """
 
 from __future__ import annotations
@@ -82,14 +82,30 @@ def send_whatsapp_message(phone: str, text: str) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
-def format_task_request_message(task_id: int, employee_name: str, department: str, reason: str, location: str, expected_minutes: int, requested_at: datetime) -> str:
-    """Format a crisp, beautiful WhatsApp alert for the lead."""
-    base_url = config.PUBLIC_URL.rstrip("/")
-    token_approve = create_task_token(task_id, "approve")
-    token_reject = create_task_token(task_id, "reject")
+def send_task_approval_poll(
+    task_id: int,
+    employee_name: str,
+    department: str,
+    reason: str,
+    location: str,
+    expected_minutes: int,
+    requested_at: datetime,
+    lead_phone: str | None = None,
+) -> dict[str, Any]:
+    """
+    Send a single clean interactive WhatsApp message stating all details with two buttons:
+    [ ✅ Approve ] and [ ❌ Decline ] (Zero links).
+    """
+    target_phone = lead_phone or config.LEAD_WHATSAPP_PHONE
+    if not target_phone or not config.WAHA_API_URL:
+        return {"ok": False, "error": "WAHA not configured"}
 
-    url_approve = f"{base_url}/api/tasks/{task_id}/quick-approve?token={token_approve}"
-    url_reject = f"{base_url}/api/tasks/{task_id}/quick-reject?token={token_reject}"
+    normalized_phone = clean_phone_number(target_phone)
+    if not normalized_phone:
+        return {"ok": False, "error": "Invalid phone number"}
+
+    chat_id = f"{normalized_phone}@c.us"
+    session_name = config.WAHA_SESSION or "default"
 
     # Format time in local office timezone (e.g. Asia/Kolkata IST)
     dt = analytics.as_dt(requested_at)
@@ -100,20 +116,42 @@ def format_task_request_message(task_id: int, employee_name: str, department: st
         time_str = "Just now"
 
     dept_str = f" ({department})" if department else ""
-    loc_str = location if location else "Not specified"
+    loc_str = location if location else "Other room"
 
-    return (
-        f"📋 *DeskTrack Movement Request*\n\n"
-        f"👤 *Employee:* {employee_name}{dept_str}\n"
-        f"📍 *Location:* {loc_str}\n"
-        f"🎯 *Reason:* {reason}\n"
-        f"⏳ *Expected Duration:* {expected_minutes} mins\n"
-        f"⏰ *Requested At:* {time_str}\n\n"
-        f"*Quick 1-Tap Actions:*\n"
-        f"👉 *Approve:* {url_approve}\n"
-        f"👉 *Decline:* {url_reject}\n\n"
-        f"_(Or reply *APPROVE {task_id}* or *REJECT {task_id}*)_"
+    poll_text = (
+        f"📋 DeskTrack Movement Request\n\n"
+        f"👤 Employee: {employee_name}{dept_str}\n"
+        f"📍 Location: {loc_str}\n"
+        f"🎯 Reason: {reason}\n"
+        f"⏳ Duration: {expected_minutes} mins\n"
+        f"⏰ Requested At: {time_str}"
     )
+
+    url = f"{config.WAHA_API_URL}/api/sendPoll"
+    headers = {"Content-Type": "application/json"}
+    if config.WAHA_API_KEY:
+        headers["X-Api-Key"] = config.WAHA_API_KEY
+
+    payload = {
+        "session": session_name,
+        "chatId": chat_id,
+        "poll": {
+            "name": poll_text,
+            "options": ["✅ Approve", "❌ Decline"],
+            "multipleAnswers": False,
+        },
+    }
+
+    try:
+        res = requests.post(url, json=payload, headers=headers, timeout=12)
+        if res.status_code in (200, 201):
+            return {"ok": True, "data": res.json() if res.content else {}}
+        logger.warning(f"WAHA sendPoll returned status {res.status_code}: {res.text[:200]}")
+        # Fallback to plain text if poll is rejected
+        return send_whatsapp_message(target_phone, poll_text + "\n\nReply with *APPROVE* or *REJECT*")
+    except Exception as exc:
+        logger.error(f"Failed to send WhatsApp poll via WAHA: {exc}")
+        return {"ok": False, "error": str(exc)}
 
 
 def notify_lead_task_request_async(
@@ -126,23 +164,18 @@ def notify_lead_task_request_async(
     requested_at: datetime,
     lead_phone: str | None = None,
 ) -> None:
-    """Dispatch WhatsApp alert to lead in a background thread so UI never hangs."""
-    target_phone = lead_phone or config.LEAD_WHATSAPP_PHONE
-    if not target_phone or not config.WAHA_API_URL:
-        return
-
-    text = format_task_request_message(
-        task_id=task_id,
-        employee_name=employee_name,
-        department=department,
-        reason=reason,
-        location=location,
-        expected_minutes=expected_minutes,
-        requested_at=requested_at,
-    )
-
+    """Dispatch single WhatsApp interactive button poll to lead in background thread."""
     def _worker():
-        send_whatsapp_message(target_phone, text)
+        send_task_approval_poll(
+            task_id=task_id,
+            employee_name=employee_name,
+            department=department,
+            reason=reason,
+            location=location,
+            expected_minutes=expected_minutes,
+            requested_at=requested_at,
+            lead_phone=lead_phone,
+        )
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -153,15 +186,5 @@ def notify_task_resolution_async(
     status: str,  # approved or rejected
     lead_phone: str | None = None,
 ) -> None:
-    """Send confirmation update back to lead when task is resolved."""
-    target_phone = lead_phone or config.LEAD_WHATSAPP_PHONE
-    if not target_phone or not config.WAHA_API_URL:
-        return
-
-    icon = "✅" if status == "approved" else "❌"
-    text = f"{icon} *DeskTrack Update:*\nTask #{task_id} for *{employee_name}* has been *{status.upper()}*."
-
-    def _worker():
-        send_whatsapp_message(target_phone, text)
-
-    threading.Thread(target=_worker, daemon=True).start()
+    """No-op: user requested a single message without follow-up messages."""
+    pass

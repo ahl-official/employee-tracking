@@ -1905,7 +1905,7 @@ def api_tasks_quick_reject(task_id: int, request: Request, token: str = "", db: 
 
 @app.post("/api/webhooks/waha")
 async def api_waha_webhook(request: Request, db: Session = Depends(get_db)):
-    """Receives incoming WhatsApp messages from WAHA for interactive replies like 'APPROVE 15'."""
+    """Receives WhatsApp poll button votes and interactive replies from WAHA."""
     try:
         body = await request.json()
     except Exception:
@@ -1914,7 +1914,44 @@ async def api_waha_webhook(request: Request, db: Session = Depends(get_db)):
     event = body.get("event")
     payload = body.get("payload") or {}
 
-    # Check for incoming message event
+    # 1. Handle Poll Button Clicks (Lead tapped "✅ Approve" or "❌ Decline")
+    if event in ("poll.vote", "poll.vote.failed") or "vote" in payload:
+        vote = payload.get("vote") or {}
+        selected = vote.get("selectedOptions") or vote.get("selected") or []
+        vote_str = " ".join(selected) if isinstance(selected, list) else str(selected)
+        vote_lower = vote_str.lower()
+
+        if "approve" in vote_lower or "✅" in vote_str:
+            cmd = "approve"
+        elif "decline" in vote_lower or "reject" in vote_lower or "❌" in vote_str:
+            cmd = "reject"
+        else:
+            return {"ok": True, "ignored": "unrecognized vote option"}
+
+        Base.metadata.create_all(bind=db.get_bind())
+        task = (
+            db.query(TaskRequest)
+            .filter(TaskRequest.status == "pending")
+            .order_by(TaskRequest.requested_at.desc())
+            .first()
+        )
+        if not task:
+            return {"ok": True, "note": "no pending task"}
+
+        now = datetime.now(timezone.utc)
+        if cmd == "approve":
+            task.status = "approved"
+            task.started_at = now
+            task.reviewed_at = now
+            db.commit()
+        else:
+            task.status = "rejected"
+            task.reviewed_at = now
+            task.rejection_reason = "Declined via WhatsApp button"
+            db.commit()
+        return {"ok": True}
+
+    # 2. Handle Text Messages (e.g. Lead typed "approve" or "reject")
     if event == "message" or "body" in payload:
         text = str(payload.get("body") or "").strip()
         from_phone = str(payload.get("from") or "")
@@ -1964,13 +2001,11 @@ async def api_waha_webhook(request: Request, db: Session = Depends(get_db)):
                 task.started_at = now
                 task.reviewed_at = now
                 db.commit()
-                waha.send_whatsapp_message(sender_clean, f"✅ Task #{task.id} for *{emp_name}* ({task.reason}, {task.expected_minutes}m) has been *APPROVED*.")
             else:
                 task.status = "rejected"
                 task.reviewed_at = now
                 task.rejection_reason = "Declined via WhatsApp message"
                 db.commit()
-                waha.send_whatsapp_message(sender_clean, f"❌ Task #{task.id} for *{emp_name}* has been *DECLINED*.")
 
     return {"ok": True}
 

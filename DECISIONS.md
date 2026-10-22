@@ -73,7 +73,17 @@
   1. **Idle & Break Immunity:** In `analytics.py`, official task time starts from `tr.requested_at` (the moment the employee stepped away). Both `idle_s` and `away` have `task_seconds` subtracted, and `presence` % credits official task time so break allowance is never consumed.
   2. **Single Daily Shift Enforce:** Once an employee clocks out for the day, the UI displays a disabled `✅ Shift Completed` button. The backend rejects any re-clock-in on the same calendar day with HTTP 400.
   3. **Natural WhatsApp Replies:** In `main.py`, the webhook supports natural single-word replies (`approve`, `approved`, `ok`, `yes`, `reject`, `no`). When no task ID is specified, it automatically matches and resolves the most recent pending task.
-- **Files Affected:** `analytics.py`, `main.py`, `frontend/src/pages/Desk.jsx`, `frontend/src/index.css`, `DECISIONS.md`.
+---
 
-
-
+## Decision 8: WhatsApp Single Message with Native Approve/Decline Buttons & Zero Links
+- **Date:** 2026-10-22
+- **Problem:**
+  1. Sending HTTP links in WhatsApp messages caused WhatsApp server link-preview crawlers to pre-fetch the URL with GET requests, prematurely approving tasks before the Lead saw them.
+  2. The Lead received multi-part messages and unwanted follow-up confirmation spam.
+  3. Meta deprecated interactive MD buttons (`/api/sendButtons`) on web protocols in 2022 (returning HTTP 501 on WAHA GOWS engine).
+- **Decision:**
+  1. **Native WhatsApp Interactive Buttons via Polls:** Use WAHA's `/api/sendPoll` (`WhatsappSessionGoWSCore.sendPoll`) to render native clickable action buttons (`[ ✅ Approve ]` and `[ ❌ Decline ]`) directly within a single WhatsApp message.
+  2. **Zero Links:** Completely eliminate all HTTP URLs from the WhatsApp message, eliminating link preview crawler bugs.
+  3. **No Follow-up Spam:** `notify_task_resolution_async` is silenced to guarantee exactly one crisp message in the chat.
+  4. **Immediate Webhook Resolution:** WAHA's `poll.vote` event delivers the button click directly to `/api/webhooks/waha`, instantly updating the task to `approved` or `rejected` in real time.
+- **Files Affected:** `waha.py`, `main.py`, `DECISIONS.md`.
