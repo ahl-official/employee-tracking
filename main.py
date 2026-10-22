@@ -1830,9 +1830,19 @@ def waha_action_html(title: str, message: str, success: bool) -> str:
 </html>"""
 
 
+def is_preview_crawler(request: Request) -> bool:
+    """Check if request comes from automated chat link preview crawlers."""
+    ua = (request.headers.get("user-agent") or "").lower()
+    return any(bot in ua for bot in ["whatsapp", "facebookexternalhit", "twitterbot", "slackbot", "telegrambot", "linkedinbot", "discordbot", "bot", "crawl", "spider"])
+
+
 @app.get("/api/tasks/{task_id}/quick-approve", response_class=HTMLResponse)
-def api_tasks_quick_approve(task_id: int, token: str = "", db: Session = Depends(get_db)):
+def api_tasks_quick_approve(task_id: int, request: Request, token: str = "", db: Session = Depends(get_db)):
     """1-Click instant approval link clicked by Lead from WhatsApp."""
+    if is_preview_crawler(request):
+        # Do not mutate state when chat preview bots pre-fetch the link
+        return HTMLResponse("""<!DOCTYPE html><html><head><meta charset="utf-8"><title>DeskTrack Movement Request</title></head><body><p>DeskTrack Movement Request</p></body></html>""")
+
     if not waha.verify_task_token(task_id, "approve", token):
         return HTMLResponse(waha_action_html("Invalid or Expired Link", "This approval link is invalid or has expired.", False), status_code=403)
 
@@ -1862,8 +1872,11 @@ def api_tasks_quick_approve(task_id: int, token: str = "", db: Session = Depends
 
 
 @app.get("/api/tasks/{task_id}/quick-reject", response_class=HTMLResponse)
-def api_tasks_quick_reject(task_id: int, token: str = "", db: Session = Depends(get_db)):
+def api_tasks_quick_reject(task_id: int, request: Request, token: str = "", db: Session = Depends(get_db)):
     """1-Click instant rejection link clicked by Lead from WhatsApp."""
+    if is_preview_crawler(request):
+        return HTMLResponse("""<!DOCTYPE html><html><head><meta charset="utf-8"><title>DeskTrack Movement Request</title></head><body><p>DeskTrack Movement Request</p></body></html>""")
+
     if not waha.verify_task_token(task_id, "reject", token):
         return HTMLResponse(waha_action_html("Invalid or Expired Link", "This link is invalid or has expired.", False), status_code=403)
 

@@ -531,6 +531,9 @@ export default function Desk() {
   if (p?.clocked_out_today) {
     callout = "You have completed your shift and clocked out for today. Your daily work summary is saved above. See you tomorrow!";
     calloutOk = true;
+  } else if (p?.active_task) {
+    callout = `You are on an official task (${p.active_task.reason}). Desk alerts are paused and official work is being credited. Click "I'm Back at Desk" when you return.`;
+    calloutOk = true;
   } else if (p?.clocked_in && camOn) {
     callout = "Camera is on for desk & presence tracking. Keep this browser tab open while you work. Clock out to turn it off.";
     calloutOk = true;

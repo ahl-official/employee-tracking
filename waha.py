@@ -91,9 +91,13 @@ def format_task_request_message(task_id: int, employee_name: str, department: st
     url_approve = f"{base_url}/api/tasks/{task_id}/quick-approve?token={token_approve}"
     url_reject = f"{base_url}/api/tasks/{task_id}/quick-reject?token={token_reject}"
 
-    # Format time in local office timezone
-    dt_local = analytics.as_dt(requested_at)
-    time_str = dt_local.strftime("%I:%M %p") if dt_local else "Just now"
+    # Format time in local office timezone (e.g. Asia/Kolkata IST)
+    dt = analytics.as_dt(requested_at)
+    if dt:
+        dt_local = dt.astimezone(config.TIMEZONE)
+        time_str = dt_local.strftime("%I:%M %p")
+    else:
+        time_str = "Just now"
 
     dept_str = f" ({department})" if department else ""
     loc_str = location if location else "Not specified"
