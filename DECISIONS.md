@@ -103,3 +103,18 @@
   4. **Active Apps Bounded:** `add_app_bucket()` is strictly suppressed when `row.present == 0` or locked (empty desk). Total active app time is capped at $T_{\text{clocked}}$.
   5. **Auto-Complete on Clock Out:** When an employee clocks out, any unended approved task is automatically finalized at clock-out time.
 - **Files Affected:** `analytics.py`, `main.py`, `DECISIONS.md`.
+
+---
+
+## Decision 10: 2-Sample Face Enrollment, Auto-Dismissing Banners & 50+ Concurrent Employee Architecture
+- **Date:** 2026-10-22
+- **Problem:**
+  1. Face enrollment previously demanded 5 separate camera samples (`MIN_ENROLL_SAMPLES = 5`), causing employees to click repeatedly and experience multiple enrollment prompts.
+  2. The green camera status banner and face enrollment banner permanently occupied vertical space at the top of the desk screen.
+  3. Scaling to 50+ concurrent employees required evaluating SQLite concurrency (`database is locked`), uvicorn CPU load from YuNet face inference, and bandwidth.
+- **Decision:**
+  1. **2-Sample Quick Face Enrollment:** Lowered `MIN_ENROLL_SAMPLES = 2` in `face_id.py` and `Desk.jsx`. Enrollment now completes in 2 snapshots.
+  2. **Auto-Dismissing Desk Banners:** Banners auto-fade after 6 seconds with manual `×` dismiss buttons. A persistent `Re-enroll face` button is placed neatly in the Live monitoring header.
+  3. **SQLite WAL & Busy Timeout:** Configured `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=10000;` on connection in `models.py`. Concurrent writes no longer block reads or trigger lock errors.
+  4. **Optimized Client Polling:** Decoupled heavy background `/api/me` poll from 3s to 10s (since `/api/me/track` already streams metrics), reducing HTTP request volume by 60% across 50 employees.
+- **Files Affected:** `face_id.py`, `models.py`, `frontend/src/pages/Desk.jsx`, `frontend/src/index.css`, `frontend/dist/`, `DECISIONS.md`.

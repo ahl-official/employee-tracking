@@ -14,8 +14,8 @@ import detector
 FACE_DIR = Path(__file__).resolve().parent / "face_models"
 SIZE = (112, 112)
 MATCH_THRESHOLD = 0.72  # cosine similarity; raise to be stricter
-MIN_ENROLL_SAMPLES = 5
-MAX_ENROLL_SAMPLES = 20
+MIN_ENROLL_SAMPLES = 2
+MAX_ENROLL_SAMPLES = 10
 
 # Per-user: last successful face match (unix time)
 _last_match_at: dict[int, float] = {}

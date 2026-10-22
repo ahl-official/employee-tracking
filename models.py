@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, create_engine
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 import config
@@ -88,6 +88,17 @@ class TaskRequest(Base):
     approver: Mapped[User | None] = relationship("User", foreign_keys=[approver_id])
 
 
-engine = create_engine(config.DATABASE_URL, connect_args={"check_same_thread": False})
+connect_args = {"check_same_thread": False} if "sqlite" in config.DATABASE_URL else {}
+engine = create_engine(config.DATABASE_URL, connect_args=connect_args)
+
+if "sqlite" in config.DATABASE_URL:
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA busy_timeout=10000;")
+        cursor.close()
+
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 

@@ -28,9 +28,11 @@ export default function Desk() {
   const [me, setMe] = useState(null);
   const [camOn, setCamOn] = useState(false);
   const [emptyMsg, setEmptyMsg] = useState("Clock in — Chrome will ask to use your camera. Allow it.");
-  const [face, setFace] = useState({ enrolled: false, count: 0, needed: 5 });
+  const [face, setFace] = useState({ enrolled: false, count: 0, needed: 2 });
   const [faceMsg, setFaceMsg] = useState("");
   const [enrolling, setEnrolling] = useState(false);
+  const [hideCamAlert, setHideCamAlert] = useState(false);
+  const [hideFaceAlert, setHideFaceAlert] = useState(false);
   const [cameras, setCameras] = useState([]);
   const [cameraId, setCameraId] = useState(() => localStorage.getItem("desktrack_camera_id") || "");
   const [downloadingLauncher, setDownloadingLauncher] = useState(false);
@@ -43,6 +45,23 @@ export default function Desk() {
   const [taskError, setTaskError] = useState("");
   const cameraIdRef = useRef(cameraId);
   cameraIdRef.current = cameraId;
+
+  // Auto-dismiss camera & face alerts after 6 seconds
+  useEffect(() => {
+    if (me?.clocked_in && camOn) {
+      const timer = setTimeout(() => setHideCamAlert(true), 6000);
+      return () => clearTimeout(timer);
+    }
+    setHideCamAlert(false);
+  }, [me?.clocked_in, camOn]);
+
+  useEffect(() => {
+    if (face.enrolled) {
+      const timer = setTimeout(() => setHideFaceAlert(true), 6000);
+      return () => clearTimeout(timer);
+    }
+    setHideFaceAlert(false);
+  }, [face.enrolled]);
 
   const submitTaskRequest = async (e) => {
     e?.preventDefault();
@@ -463,7 +482,7 @@ export default function Desk() {
 
     refresh();
     refreshFace();
-    const t1 = setInterval(refresh, 3000);
+    const t1 = setInterval(refresh, 10000);
     const t2 = setInterval(async () => {
       const video = videoRef.current;
       if (!streamRef.current || !meRef.current?.clocked_in || !video || video.readyState < 2) return;
@@ -495,7 +514,7 @@ export default function Desk() {
         /* keep the live view even if one ping fails */
       }
       drawOverlay(lastPresent.current);
-    }, 2000);
+    }, 2500);
     const t3 = setInterval(() => drawOverlay(lastPresent.current), 300);
     return () => {
       ["mousemove", "keydown", "click", "scroll"].forEach((ev) => window.removeEventListener(ev, bump));
@@ -616,7 +635,23 @@ export default function Desk() {
         </div>
       ) : null}
 
-      <div className={calloutOk ? "callout ok" : "callout"}>{callout}</div>
+      {/* Camera info callout (auto-dismisses after 6s when camera is running) */}
+      {(!p?.clocked_in || !camOn || !hideCamAlert) && !p?.active_task ? (
+        <div className={calloutOk ? "callout ok" : "callout"}>
+          <span>{callout}</span>
+          {p?.clocked_in && camOn ? (
+            <button
+              type="button"
+              className="btn-alert-close"
+              onClick={() => setHideCamAlert(true)}
+              title="Dismiss alert"
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {!face.enrolled ? (
         <>
           <div className="callout face-needed">
@@ -629,7 +664,7 @@ export default function Desk() {
               Enroll once so only <strong>you</strong> count as present. Someone else at your desk will not count.
             </p>
             <p className="face-status">
-              Not enrolled yet — need about {face.needed || 5} face samples.
+              Not enrolled yet — need about {face.needed || 2} face samples.
             </p>
             {faceMsg ? <p className="hint">{faceMsg}</p> : null}
             <div className="actions">
@@ -639,14 +674,24 @@ export default function Desk() {
             </div>
           </div>
         </>
-      ) : (
+      ) : !hideFaceAlert ? (
         <div className="callout ok face-done">
-          Face enrolled — identity check is on.
-          <button type="button" className="linkish" onClick={clearFace}>
-            Clear &amp; re-enroll
-          </button>
+          <span>Face enrolled — identity check is on.</span>
+          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            <button type="button" className="linkish" onClick={clearFace}>
+              Clear &amp; re-enroll
+            </button>
+            <button
+              type="button"
+              className="btn-alert-close"
+              onClick={() => setHideFaceAlert(true)}
+              title="Dismiss alert"
+            >
+              ×
+            </button>
+          </div>
         </div>
-      )}
+      ) : null}
       <div className="kpis">
         <div className="kpi">
           <span>Status</span>
@@ -696,6 +741,11 @@ export default function Desk() {
               <button type="button" className="ghost cam-refresh" onClick={refreshCamerasClick}>
                 Refresh list
               </button>
+              {face.enrolled ? (
+                <button type="button" className="ghost cam-reenroll" onClick={clearFace} title="Re-enroll your face">
+                  Re-enroll face
+                </button>
+              ) : null}
             </div>
           </div>
           <p className="hint cam-hint">
