@@ -470,26 +470,30 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             .filter(
                 TaskRequest.user_id == user_id,
                 TaskRequest.status.in_(["approved", "completed"]),
-                TaskRequest.started_at < end,
+                TaskRequest.requested_at < end,
                 (TaskRequest.ended_at == None) | (TaskRequest.ended_at >= start),
             )
             .all()
         )
         task_seconds = 0.0
         for tr in task_rows:
-            t_start = as_dt(tr.started_at or tr.requested_at)
+            # Time spent on task starts from when employee requested to step away
+            t_start = as_dt(tr.requested_at or tr.started_at)
             t_end = as_dt(tr.ended_at) if tr.ended_at else min(now, end)
             if t_end > t_start:
                 task_seconds += overlap_intervals(max(t_start, start), min(t_end, end), intervals)
 
         # Official tasks count toward productive work
         work += task_seconds
-        # Remove approved task time from idle so employees are not penalized
+        # Remove approved task time from idle and away so neither idle time nor break allowance is deducted
         idle_s = max(0.0, idle_s - task_seconds)
+        away = max(0.0, away - task_seconds)
+        # Credit approved on-task time to employee's daily presence percentage
+        presence = int(round(100.0 * min(total_clocked, seated_s + task_seconds) / total_clocked)) if total_clocked > 0 else 0
 
     allowance = config.BREAK_ALLOWANCE_SECONDS
     # Away time that consumes personal break excludes approved official task time
-    away_total = max(float(away), float(idle_s))
+    away_total = max(0.0, max(float(away), float(idle_s)))
     break_used = min(away_total, allowance)
     break_left = max(0.0, allowance - away_total)
 

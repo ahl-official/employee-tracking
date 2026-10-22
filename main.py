@@ -280,6 +280,20 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
         live_app = fg.get("app") or live_app
         live_title = fg.get("title") or live_title
         live_device = "laptop"
+    clocked_out_today = (
+        not clocked_in
+        and viewing_today
+        and (
+            db.query(WorkSession)
+            .filter(
+                WorkSession.user_id == emp.id,
+                WorkSession.clock_in >= start,
+                WorkSession.clock_out.isnot(None),
+            )
+            .first()
+            is not None
+        )
+    )
     return {
         "id": emp.id,
         "name": emp.name,
@@ -288,6 +302,7 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
         "status": status,
         "on_break": status == "break",
         "on_task": status == "task",
+        "clocked_out_today": clocked_out_today,
         "active_task": None if not active_task else {
             "id": active_task.id,
             "reason": active_task.reason,
@@ -1304,7 +1319,24 @@ def api_clock(request: Request, payload: dict = Body(...), db: Session = Depends
         return JSONResponse({"ok": False}, status_code=401)
     analytics.close_overnight_sessions(db, user.id)
     open_row = analytics.open_session(db, user.id)
+    start, end = analytics.day_range()
+
     if payload.get("action") == "in" and open_row is None:
+        already_completed = (
+            db.query(WorkSession)
+            .filter(
+                WorkSession.user_id == user.id,
+                WorkSession.clock_in >= start,
+                WorkSession.clock_out.isnot(None),
+            )
+            .first()
+        )
+        if already_completed:
+            return JSONResponse(
+                {"ok": False, "error": "You have already clocked out for today. Shift completed."},
+                status_code=400,
+            )
+
         now = utc_now()
         db.add(WorkSession(user_id=user.id, clock_in=now))
         # Seed a beat at clock-in so Idle/Seated start moving immediately (before first camera frame)
@@ -1332,9 +1364,26 @@ def api_clock(request: Request, payload: dict = Body(...), db: Session = Depends
             pass
     db.commit()
     clocked_in = analytics.open_session(db, user.id) is not None
-    start, end = analytics.day_range()
     summary = analytics.summarize(db, user.id, start, end)
-    return {"ok": True, "clocked_in": clocked_in, "today": summary}
+    clocked_out_today = (
+        not clocked_in
+        and (
+            db.query(WorkSession)
+            .filter(
+                WorkSession.user_id == user.id,
+                WorkSession.clock_in >= start,
+                WorkSession.clock_out.isnot(None),
+            )
+            .first()
+            is not None
+        )
+    )
+    return {
+        "ok": True,
+        "clocked_in": clocked_in,
+        "clocked_out_today": clocked_out_today,
+        "today": summary,
+    }
 
 
 @app.get("/api/agent/state")
@@ -1863,35 +1912,52 @@ async def api_waha_webhook(request: Request, db: Session = Depends(get_db)):
         if lead_clean and sender_clean != lead_clean:
             return {"ok": True, "ignored": "unauthorized sender"}
 
-        # Match command: e.g. "APPROVE 15" or "REJECT 15"
-        m = re.match(r"^(approve|accept|yes|ok|reject|decline|no)\s+(\d+)$", text, re.IGNORECASE)
-        if m:
-            cmd = m.group(1).lower()
-            task_id = int(m.group(2))
+        # Match commands:
+        # Format 1: "APPROVE 15" or "REJECT 15" or "approve #1"
+        # Format 2: "APPROVE", "APPROVED", "YES", "OK", "DONE", "YEP", "REJECT", "DECLINE", "NO"
+        text_clean = text.strip()
+        m_id = re.match(r"^(approve|approved|accept|accepted|yes|ok|done|yep|reject|rejected|decline|declined|no)\s*#?(\d+)$", text_clean, re.IGNORECASE)
+        m_word = re.match(r"^(approve|approved|accept|accepted|yes|ok|done|yep|reject|rejected|decline|declined|no)$", text_clean, re.IGNORECASE)
+
+        if m_id or m_word:
             Base.metadata.create_all(bind=db.get_bind())
-            task = db.get(TaskRequest, task_id)
-            if not task:
-                waha.send_whatsapp_message(sender_clean, f"❌ Task #{task_id} not found.")
-                return {"ok": True}
+            cmd = (m_id.group(1) if m_id else m_word.group(1)).lower()
+            if m_id:
+                task_id = int(m_id.group(2))
+                task = db.get(TaskRequest, task_id)
+                if not task:
+                    waha.send_whatsapp_message(sender_clean, f"❌ Task #{task_id} not found.")
+                    return {"ok": True}
+            else:
+                # Auto-match latest pending request
+                task = (
+                    db.query(TaskRequest)
+                    .filter(TaskRequest.status == "pending")
+                    .order_by(TaskRequest.requested_at.desc())
+                    .first()
+                )
+                if not task:
+                    waha.send_whatsapp_message(sender_clean, "ℹ️ No pending movement requests found to approve or decline.")
+                    return {"ok": True}
 
             emp_name = task.user.name if task.user else "Employee"
             if task.status != "pending":
-                waha.send_whatsapp_message(sender_clean, f"ℹ️ Task #{task_id} for *{emp_name}* is already {task.status}.")
+                waha.send_whatsapp_message(sender_clean, f"ℹ️ Task #{task.id} for *{emp_name}* is already {task.status}.")
                 return {"ok": True}
 
             now = datetime.now(timezone.utc)
-            if cmd in ("approve", "accept", "yes", "ok"):
+            if cmd in ("approve", "approved", "accept", "accepted", "yes", "ok", "done", "yep"):
                 task.status = "approved"
                 task.started_at = now
                 task.reviewed_at = now
                 db.commit()
-                waha.send_whatsapp_message(sender_clean, f"✅ Task #{task_id} for *{emp_name}* has been *APPROVED* ({task.expected_minutes}m).")
+                waha.send_whatsapp_message(sender_clean, f"✅ Task #{task.id} for *{emp_name}* ({task.reason}, {task.expected_minutes}m) has been *APPROVED*.")
             else:
                 task.status = "rejected"
                 task.reviewed_at = now
                 task.rejection_reason = "Declined via WhatsApp message"
                 db.commit()
-                waha.send_whatsapp_message(sender_clean, f"❌ Task #{task_id} for *{emp_name}* has been *DECLINED*.")
+                waha.send_whatsapp_message(sender_clean, f"❌ Task #{task.id} for *{emp_name}* has been *DECLINED*.")
 
     return {"ok": True}
 

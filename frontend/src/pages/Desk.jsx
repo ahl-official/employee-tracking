@@ -383,8 +383,15 @@ export default function Desk() {
   }
 
   async function toggleClock() {
+    if (meRef.current?.clocked_out_today) {
+      alert("You have already clocked out for today. Shift completed.");
+      return;
+    }
     const goingOut = !!meRef.current?.clocked_in;
     if (goingOut) {
+      if (!confirm("Are you sure you want to clock out for today? You will not be able to clock back in until tomorrow.")) {
+        return;
+      }
       const { ok, data } = await api("/api/clock", {
         method: "POST",
         body: JSON.stringify({ action: "out" }),
@@ -413,7 +420,7 @@ export default function Desk() {
     if (data.today) {
       setMe((prev) =>
         prev
-          ? { ...prev, clocked_in: true, today: { ...prev.today, ...data.today } }
+          ? { ...prev, clocked_in: true, clocked_out_today: false, today: { ...prev.today, ...data.today } }
           : prev
       );
     }
@@ -521,7 +528,10 @@ export default function Desk() {
 
   let callout = "Clocked out. Click Clock in — the browser will ask to use your camera. Click Allow.";
   let calloutOk = false;
-  if (p?.clocked_in && camOn) {
+  if (p?.clocked_out_today) {
+    callout = "You have completed your shift and clocked out for today. Your daily work summary is saved above. See you tomorrow!";
+    calloutOk = true;
+  } else if (p?.clocked_in && camOn) {
     callout = "Camera is on for desk & presence tracking. Keep this browser tab open while you work. Clock out to turn it off.";
     calloutOk = true;
   } else if (p?.clocked_in) {
@@ -542,9 +552,20 @@ export default function Desk() {
               📋 Step Away on Task
             </button>
           ) : null}
-          <button type="button" onClick={toggleClock}>
-            {p?.clocked_in ? "Clock out" : "Clock in"}
-          </button>
+          {p?.clocked_out_today ? (
+            <button
+              type="button"
+              className="btn-shift-done"
+              disabled
+              title="Shift completed for today. Re-clock in is not permitted."
+            >
+              ✅ Shift Completed
+            </button>
+          ) : (
+            <button type="button" onClick={toggleClock}>
+              {p?.clocked_in ? "Clock out" : "Clock in"}
+            </button>
+          )}
         </div>
       </header>
 

@@ -1174,3 +1174,15 @@ button.linkish {
 .btn-decline-task:hover {
   background: #fef2f2;
 }
+
+.btn-shift-done {
+  background: #f1f5f9 !important;
+  color: #475569 !important;
+  border: 1px solid #cbd5e1 !important;
+  cursor: not-allowed !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  padding: 0.5rem 1rem !important;
+  font-size: 0.9rem !important;
+  opacity: 0.9;
+}

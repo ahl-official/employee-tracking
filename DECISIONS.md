@@ -61,4 +61,19 @@
   6. **Static Code Verification:** Verified with `pyflakes` to ensure all imports (including `timezone`, `re`, `waha`) and dependencies are strictly defined across all application modules.
 - **Files Affected:** `docker-compose.yml`, `Dockerfile`, `requirements.txt`, `config.py`, `models.py`, `main.py`, `waha.py`, `DECISIONS.md`.
 
+---
+
+## Decision 7: Complete Task Idle Exemption, Single Daily Clock-Out Enforce, and WhatsApp Auto-Match
+- **Date:** 2026-10-22
+- **Problem:**
+  1. When an employee was away on an approved task, raw away seconds were not deducted from `away`, causing `max(away, idle_s)` to consume their 30-minute break allowance. Also, tasks only started from `started_at` (when lead approved), penalizing the elapsed time since `requested_at`.
+  2. After clocking out for the day, the UI reverted to "Clock in", allowing accidental or unauthorized re-clocking in.
+  3. WAHA webhook required exact syntax (`APPROVE <id>`), failing on natural replies like `approve`, `approved`, `yes`, or `ok`. Also, session `ahlaiteam` in WAHA did not have DeskTrack's webhook registered.
+- **Decision:**
+  1. **Idle & Break Immunity:** In `analytics.py`, official task time starts from `tr.requested_at` (the moment the employee stepped away). Both `idle_s` and `away` have `task_seconds` subtracted, and `presence` % credits official task time so break allowance is never consumed.
+  2. **Single Daily Shift Enforce:** Once an employee clocks out for the day, the UI displays a disabled `✅ Shift Completed` button. The backend rejects any re-clock-in on the same calendar day with HTTP 400.
+  3. **Natural WhatsApp Replies:** In `main.py`, the webhook supports natural single-word replies (`approve`, `approved`, `ok`, `yes`, `reject`, `no`). When no task ID is specified, it automatically matches and resolves the most recent pending task.
+- **Files Affected:** `analytics.py`, `main.py`, `frontend/src/pages/Desk.jsx`, `frontend/src/index.css`, `DECISIONS.md`.
+
+
 
