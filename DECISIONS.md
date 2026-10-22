@@ -87,3 +87,19 @@
   3. **No Follow-up Spam:** `notify_task_resolution_async` is silenced to guarantee exactly one crisp message in the chat.
   4. **Immediate Webhook Resolution:** WAHA's `poll.vote` event delivers the button click directly to `/api/webhooks/waha`, instantly updating the task to `approved` or `rejected` in real time.
 - **Files Affected:** `waha.py`, `main.py`, `DECISIONS.md`.
+
+---
+
+## Decision 9: Rigorous Time Partitioning & Mutual Exclusivity for Seated, Active Apps, Tasks, and Idle
+- **Date:** 2026-10-22
+- **Problem:**
+  1. **Seated & Task Double Counting:** When testing tasks while sitting in front of the webcam, the camera credited seated time, and the task simultaneously credited task time. `task_seconds` was deducted from `idle_s`, which erased the employee's morning idle time (dropping idle from 1h 12m to 28m 47s), falsely refunded personal break allowance (`break_left` jumped from 0s to 47s), and inflated `presence %` from 78% to 92%.
+  2. **Phantom Active (Apps) Accumulation:** When an employee walked away or left the screen idle without Win+L (`present == 0`), the background desktop agent's foreground app was still added to `Active (apps)` across long gap intervals. This caused `Active (apps)` (6h 08m) to exceed total clocked shift time (~5h 50m).
+- **Decision:**
+  1. **Strict Partition of Clocked Shift:** At any second during a clocked-in shift, time is partitioned into 3 mutually exclusive components:
+     $$T_{\text{clocked}} = T_{\text{seated}} + T_{\text{task\_away}} + T_{\text{idle}}$$
+  2. **Seated Time Priority:** Any time the employee's face is detected in front of the webcam is credited to $T_{\text{seated}}$.
+  3. **Away-on-Task Exemption:** Official tasks ONLY credit time when the employee was actually away from their desk camera ($T_{\text{task\_away}} = \max(0, T_{\text{task\_total}} - T_{\text{task\_seated}})$). Testing while seated does not double-count or erase prior morning idle.
+  4. **Active Apps Bounded:** `add_app_bucket()` is strictly suppressed when `row.present == 0` or locked (empty desk). Total active app time is capped at $T_{\text{clocked}}$.
+  5. **Auto-Complete on Clock Out:** When an employee clocks out, any unended approved task is automatically finalized at clock-out time.
+- **Files Affected:** `analytics.py`, `main.py`, `DECISIONS.md`.

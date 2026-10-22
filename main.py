@@ -1354,7 +1354,14 @@ def api_clock(request: Request, payload: dict = Body(...), db: Session = Depends
             )
         )
     elif payload.get("action") == "out" and open_row is not None:
-        open_row.clock_out = utc_now()
+        now_out = utc_now()
+        open_row.clock_out = now_out
+        # Cleanly complete any open task when employee clocks out
+        db.query(TaskRequest).filter(
+            TaskRequest.user_id == user.id,
+            TaskRequest.status == "approved",
+            TaskRequest.ended_at == None,
+        ).update({"ended_at": now_out, "status": "completed"})
         PREVIEW_FRAMES.pop(user.id, None)
         PREVIEW_META.pop(user.id, None)
         _LAST_FACE_SEEN.pop(user.id, None)

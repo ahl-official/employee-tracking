@@ -373,12 +373,39 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
     workday_full = float(getattr(config, "WORKDAY_SECONDS", 9 * 3600))
     intervals = session_intervals(db, user_id, start, end, now)
     elapsed = sum((b - a).total_seconds() for a, b in intervals)
-    # Cap reported clocked time at one workday for presence math
-    elapsed_capped = min(elapsed, workday_full)
+
+    # Fetch approved/completed tasks for this user today
+    task_rows = (
+        db.query(TaskRequest)
+        .filter(
+            TaskRequest.user_id == user_id,
+            TaskRequest.status.in_(["approved", "completed"]),
+            TaskRequest.requested_at < end,
+            (TaskRequest.ended_at == None) | (TaskRequest.ended_at >= start),
+        )
+        .all()
+    )
+    task_intervals: list[tuple[datetime, datetime]] = []
+    for tr in task_rows:
+        t_start = as_dt(tr.requested_at or tr.started_at)
+        if not t_start:
+            continue
+        if tr.ended_at:
+            t_end = as_dt(tr.ended_at)
+        else:
+            # Active task: cap at expected duration * 2 (or 1h min) if unended, up to now
+            max_mins = max(int(tr.expected_minutes or 15) * 2, 60)
+            t_end = min(now, t_start + timedelta(minutes=max_mins))
+        t_a = max(t_start, start)
+        t_b = min(t_end, end)
+        if t_b > t_a:
+            task_intervals.append((t_a, t_b))
+
+    task_seated_s = 0.0
 
     def credit(row, delta: float, t0: datetime, t1: datetime) -> None:
         """Only count time that overlaps a clocked-in session."""
-        nonlocal seated, work, other, away
+        nonlocal seated, away, task_seated_s
         if delta <= 0:
             return
         in_session = overlap_intervals(t0, t1, intervals)
@@ -405,16 +432,19 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             else:
                 other += seconds
 
-        # Explicit no-face / lock = away (break). Unknown present = idle only (via elapsed - seated).
+        # Explicit no-face / lock = away (break).
         if locked or row.present == 0:
             away += use
-            add_app_bucket(use)
+            # Do NOT accumulate active app time when employee is away from desk or locked
             return
         if row.present == 1:
             seated += use
             add_app_bucket(use)
+            if task_intervals:
+                # Track how much seated time occurred during an approved task
+                task_seated_s += overlap_intervals(t0, t1, task_intervals) * scale
             return
-        # present is None / unknown — still count app time while clocked in
+        # present is None / unknown — agent heartbeat before camera or between frames
         add_app_bucket(use)
 
     grace = float(getattr(config, "PRESENCE_GAP_GRACE_SECONDS", 420))
@@ -445,68 +475,60 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         else:
             credit(row, min(max(gap, 0), cap), t0, t1)
 
-    active = sum(apps.values())
     all_apps = sorted(apps.items(), key=lambda item: item[1], reverse=True)
     useful = (work / (work + other) * 100) if (work + other) else 0
 
-    # Seated = face visible while clocked in (with 7m hold).
-    # Idle = clocked-in time with no face (away, lock, sleep, no camera, long gap).
-    # Bounded strictly to the time between Clock In and Clock Out.
     if not intervals or elapsed <= 0:
-        seated_s = 0.0
-        idle_s = 0.0
-        presence = 0
         total_clocked = 0.0
-        task_seconds = 0.0
+        seated_s = 0.0
+        active = 0.0
+        idle_s = 0.0
+        task_away_s = 0.0
+        task_total_s = 0.0
+        presence = 0
+        break_used = 0.0
+        break_left = float(config.BREAK_ALLOWANCE_SECONDS)
     else:
         total_clocked = elapsed
         seated_s = min(float(seated), total_clocked)
-        idle_s = max(0.0, total_clocked - seated_s)
-        presence = int(round(100.0 * seated_s / total_clocked)) if total_clocked > 0 else 0
+        # Active app time can never exceed total clocked shift time
+        active = min(sum(apps.values()), total_clocked)
 
-        # Account for approved tasks away from desk (meetings, other room, etc.)
-        task_rows = (
-            db.query(TaskRequest)
-            .filter(
-                TaskRequest.user_id == user_id,
-                TaskRequest.status.in_(["approved", "completed"]),
-                TaskRequest.requested_at < end,
-                (TaskRequest.ended_at == None) | (TaskRequest.ended_at >= start),
-            )
-            .all()
-        )
-        task_seconds = 0.0
-        for tr in task_rows:
-            # Time spent on task starts from when employee requested to step away
-            t_start = as_dt(tr.requested_at or tr.started_at)
-            t_end = as_dt(tr.ended_at) if tr.ended_at else min(now, end)
-            if t_end > t_start:
-                task_seconds += overlap_intervals(max(t_start, start), min(t_end, end), intervals)
+        # Total non-seated time during the shift
+        non_seated_s = max(0.0, total_clocked - seated_s)
+
+        # Total approved task overlap with clocked-in session
+        task_total_s = sum(overlap_intervals(ta, tb, intervals) for ta, tb in task_intervals)
+
+        # Away-on-task = task time during which employee was NOT already seated at desk
+        task_away_s = max(0.0, task_total_s - task_seated_s)
+        task_away_s = min(task_away_s, non_seated_s)
+
+        # True Idle = non-seated time that was NOT approved task time
+        idle_s = max(0.0, non_seated_s - task_away_s)
 
         # Official tasks count toward productive work
-        work += task_seconds
-        # Remove approved task time from idle and away so neither idle time nor break allowance is deducted
-        idle_s = max(0.0, idle_s - task_seconds)
-        away = max(0.0, away - task_seconds)
-        # Credit approved on-task time to employee's daily presence percentage
-        presence = int(round(100.0 * min(total_clocked, seated_s + task_seconds) / total_clocked)) if total_clocked > 0 else 0
+        work += task_away_s
 
-    allowance = config.BREAK_ALLOWANCE_SECONDS
-    # Away time that consumes personal break excludes approved official task time
-    away_total = max(0.0, max(float(away), float(idle_s)))
-    break_used = min(away_total, allowance)
-    break_left = max(0.0, allowance - away_total)
+        # Break allowance: only true idle / unapproved away time consumes break
+        allowance = float(config.BREAK_ALLOWANCE_SECONDS)
+        break_used = min(idle_s, allowance)
+        break_left = max(0.0, allowance - idle_s)
+
+        # Presence %: (Seated + Approved Task Work) / Clocked
+        productive_s = min(total_clocked, seated_s + task_away_s)
+        presence = int(round(100.0 * productive_s / total_clocked)) if total_clocked > 0 else 0
 
     return {
         "samples": len(rows),
         "seated": fmt_hours(seated_s),
         "active": fmt_hours(active),
         "idle": fmt_hours(idle_s),
-        "away": fmt_hours(away_total),
+        "away": fmt_hours(idle_s),
         "work": fmt_hours(work),
         "other": fmt_hours(other),
-        "task_seconds": int(task_seconds),
-        "task_time": fmt_hours(task_seconds),
+        "task_seconds": int(task_total_s),
+        "task_time": fmt_hours(task_total_s),
         "useful_pct": round(useful),
         "presence_pct": presence,
         "workday_seconds": int(workday_full),
@@ -516,7 +538,7 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         "break_used": fmt_hours(break_used),
         "break_left": fmt_hours(break_left),
         "break_left_seconds": int(break_left),
-        "away_seconds": int(away_total),
+        "away_seconds": int(idle_s),
         "apps": [
             {
                 "app": app_labels.get(name, pretty_app_name(name)),
