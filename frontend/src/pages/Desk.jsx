@@ -25,10 +25,27 @@ export default function Desk() {
   const lastSize = useRef({ w: 640, h: 480 });
   const camTried = useRef(false);
 
-  const [me, setMe] = useState(null);
+  const [me, setMe] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem("desktrack_me");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        meRef.current = parsed;
+        return parsed;
+      }
+    } catch {}
+    return null;
+  });
+  const [initialLoading, setInitialLoading] = useState(() => !sessionStorage.getItem("desktrack_me"));
   const [camOn, setCamOn] = useState(false);
   const [emptyMsg, setEmptyMsg] = useState("Clock in — Chrome will ask to use your camera. Allow it.");
-  const [face, setFace] = useState({ enrolled: false, count: 0, needed: 2 });
+  const [face, setFace] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem("desktrack_face");
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return { loaded: false, enrolled: true, count: 0, needed: 2 };
+  });
   const [faceMsg, setFaceMsg] = useState("");
   const [enrolling, setEnrolling] = useState(false);
   const [hideCamAlert, setHideCamAlert] = useState(false);
@@ -327,7 +344,13 @@ export default function Desk() {
 
   const refreshFace = useCallback(async () => {
     const { ok, data } = await api("/api/me/face");
-    if (ok) setFace(data);
+    if (ok) {
+      const faceData = { ...data, loaded: true };
+      setFace(faceData);
+      try {
+        sessionStorage.setItem("desktrack_face", JSON.stringify(faceData));
+      } catch {}
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -335,6 +358,10 @@ export default function Desk() {
     if (!ok) return;
     meRef.current = data;
     setMe(data);
+    setInitialLoading(false);
+    try {
+      sessionStorage.setItem("desktrack_me", JSON.stringify(data));
+    } catch {}
     if (data.clocked_in && !streamRef.current) {
       camTried.current = true;
       startCamera(cameraIdRef.current);
@@ -397,6 +424,10 @@ export default function Desk() {
     if (!confirm("Remove your enrolled face? Presence will not be identity-checked until you enroll again.")) return;
     await api("/api/me/face", { method: "DELETE", body: "{}" });
     setFaceMsg("Face enrollment cleared.");
+    try {
+      sessionStorage.removeItem("desktrack_face");
+    } catch {}
+    setFace({ loaded: true, enrolled: false, count: 0, needed: 2 });
     refreshFace();
     window.dispatchEvent(new Event("desktrack-face"));
   }
@@ -480,6 +511,10 @@ export default function Desk() {
     };
     navigator.mediaDevices?.addEventListener("devicechange", onDeviceChange);
 
+    if (meRef.current?.clocked_in && !streamRef.current) {
+      camTried.current = true;
+      startCamera(cameraIdRef.current);
+    }
     refresh();
     refreshFace();
     const t1 = setInterval(refresh, 10000);
@@ -547,7 +582,10 @@ export default function Desk() {
 
   let callout = "Clocked out. Click Clock in — the browser will ask to use your camera. Click Allow.";
   let calloutOk = false;
-  if (p?.clocked_out_today) {
+  if (initialLoading && !p) {
+    callout = "Connecting to desk…";
+    calloutOk = true;
+  } else if (p?.clocked_out_today) {
     callout = "You have completed your shift and clocked out for today. Your daily work summary is saved above. See you tomorrow!";
     calloutOk = true;
   } else if (p?.active_task) {
@@ -574,7 +612,11 @@ export default function Desk() {
               📋 Step Away on Task
             </button>
           ) : null}
-          {p?.clocked_out_today ? (
+          {initialLoading && !p ? (
+            <button type="button" disabled style={{ opacity: 0.6 }}>
+              Connecting…
+            </button>
+          ) : p?.clocked_out_today ? (
             <button
               type="button"
               className="btn-shift-done"
@@ -652,7 +694,8 @@ export default function Desk() {
         </div>
       ) : null}
 
-      {!face.enrolled ? (
+      {/* Face enrollment: ONLY show when server has loaded and explicitly confirms employee is not enrolled */}
+      {face.loaded && !face.enrolled ? (
         <>
           <div className="callout face-needed">
             <strong>Face enrollment required.</strong> Click <em>Enroll face</em> below, allow the camera,
@@ -674,7 +717,7 @@ export default function Desk() {
             </div>
           </div>
         </>
-      ) : !hideFaceAlert ? (
+      ) : face.enrolled && !hideFaceAlert ? (
         <div className="callout ok face-done">
           <span>Face enrolled — identity check is on.</span>
           <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>

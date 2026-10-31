@@ -118,3 +118,16 @@
   3. **SQLite WAL & Busy Timeout:** Configured `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=10000;` on connection in `models.py`. Concurrent writes no longer block reads or trigger lock errors.
   4. **Optimized Client Polling:** Decoupled heavy background `/api/me` poll from 3s to 10s (since `/api/me/track` already streams metrics), reducing HTTP request volume by 60% across 50 employees.
 - **Files Affected:** `face_id.py`, `models.py`, `frontend/src/pages/Desk.jsx`, `frontend/src/index.css`, `frontend/dist/`, `DECISIONS.md`.
+
+---
+
+## Decision 11: Eliminate Flash of Uninitialized Clocked-Out / Face Enrollment State
+- **Date:** 2026-10-31
+- **Problem:**
+  1. When an active clocked-in employee navigated between "Account" and "My desk", or refreshed the page, the screen briefly flashed into the "Clocked Out" view for 400ms.
+  2. The button flashed "Clock in", the banner showed "Clocked out...", and the large "Face enrollment required" card appeared before vanishing as soon as the API response arrived.
+- **Decision:**
+  1. **Session Storage Persistence:** Cache `desktrack_me` and `desktrack_face` in `sessionStorage` so the page renders the active clocked-in state and metrics immediately on mount without awaiting HTTP roundtrips.
+  2. **Face Guard:** Added `loaded` flag so the "Face enrollment required" prompt ONLY renders when the server explicitly confirms `face.loaded && !face.enrolled`.
+  3. **Instant Camera Startup:** If `me.clocked_in` is already true from cache, `startCamera` initiates immediately on mount instead of delaying until after network polling completes.
+- **Files Affected:** `frontend/src/pages/Desk.jsx`, `DECISIONS.md`.
