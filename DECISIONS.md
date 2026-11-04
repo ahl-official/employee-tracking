@@ -131,3 +131,16 @@
   2. **Face Guard:** Added `loaded` flag so the "Face enrollment required" prompt ONLY renders when the server explicitly confirms `face.loaded && !face.enrolled`.
   3. **Instant Camera Startup:** If `me.clocked_in` is already true from cache, `startCamera` initiates immediately on mount instead of delaying until after network polling completes.
 - **Files Affected:** `frontend/src/pages/Desk.jsx`, `DECISIONS.md`.
+
+---
+
+## Decision 12: Bundle Agent Directory into Docker Container to Fix 1-Click Workstation Installer
+- **Date:** 2026-11-04
+- **Problem:**
+  1. When Saniya (or any employee) downloaded and ran the 1-click workstation connector `.bat` file, the installer failed with `"Failed to obtain tracker from server."`
+  2. The server generates a self-contained `.bat` file with the agent script embedded as base64 (`$agentB64`). However, `Dockerfile` never copied the `agent/` folder into `/app` in the container.
+  3. Consequently, `agent_path.is_file()` was `False`, `$agentB64` was empty, and the fallback URLs failed (the server endpoint returned 404 because `agent/` was missing, and the raw GitHub URL failed because the repo is private).
+- **Decision:**
+  1. Updated `Dockerfile` to explicitly copy `agent/`, `static/`, and `templates/` into the Docker image.
+  2. Verified `main.py` embeds the full base64 agent payload directly inside the `.bat` file, making it 100% self-contained with zero external download requirements.
+- **Files Affected:** `Dockerfile`, `DECISIONS.md`.
