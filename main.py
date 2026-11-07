@@ -2050,11 +2050,12 @@ def hr_export(request: Request, day: str | None = None, db: Session = Depends(ge
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
-        ["day", "name", "department", "status", "seated", "active", "idle", "break_used", "work_apps", "other_apps", "useful_pct", "presence_pct"]
+        ["day", "name", "department", "status", "seated", "active", "idle", "break_used", "work_apps", "other_apps", "useful_pct", "presence_pct", "tracked_apps"]
     )
     for emp in employees:
         card = employee_card(db, emp, day=chosen)
         t = card["today"]
+        apps_summary = "; ".join([f"{a['app']} ({a['label']})" for a in t.get("apps", [])]) or "None"
         writer.writerow(
             [
                 chosen.isoformat(),
@@ -2069,6 +2070,7 @@ def hr_export(request: Request, day: str | None = None, db: Session = Depends(ge
                 t["other"],
                 t["useful_pct"],
                 t.get("presence_pct", 0),
+                apps_summary,
             ]
         )
     db.commit()

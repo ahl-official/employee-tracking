@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { api, todayIST } from "../api";
 import { Badge } from "../components/Badge";
 
 export default function Employee() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dayParam = searchParams.get("day");
+  const [day, setDay] = useState(dayParam || todayIST());
   const navigate = useNavigate();
   const [p, setP] = useState(null);
   const [feed, setFeed] = useState("");
   const wrapRef = useRef(null);
+  const isViewingToday = day === todayIST();
 
   async function deleteThisEmployee() {
     if (
@@ -27,13 +31,15 @@ export default function Employee() {
   }
 
   const refresh = useCallback(async () => {
-    const { ok, data } = await api(`/api/employee/${id}`);
+    const { ok, data } = await api(`/api/employee/${id}?day=${encodeURIComponent(day)}`);
     if (ok) setP(data);
-  }, [id]);
+  }, [id, day]);
 
   useEffect(() => {
     setFeed("");
     refresh();
+    if (!isViewingToday) return;
+
     const t1 = setInterval(() => {
       if (document.visibilityState === "visible") refresh();
     }, 5000);
@@ -49,7 +55,7 @@ export default function Employee() {
       clearInterval(t1);
       clearInterval(t2);
     };
-  }, [id, refresh]);
+  }, [id, day, isViewingToday, refresh]);
 
   function toggleFullscreen() {
     const wrap = wrapRef.current;
@@ -88,10 +94,36 @@ export default function Employee() {
           </p>
           <h1>{p?.name || "Employee"}</h1>
           <p className="muted">
-            {p?.department || ""} · today’s live desk view, seated time, and apps. Past days are on Daily report.
+            {p?.department || ""} · {isViewingToday ? "Today's live desk view, seated time, and apps." : `Viewing historical desk activity and tracked apps for ${day}.`}
           </p>
         </div>
-        <div>
+        <div className="actions" style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <label className="day-pick">
+            Day{" "}
+            <input
+              type="date"
+              value={day}
+              max={todayIST()}
+              onChange={(e) => {
+                const next = e.target.value;
+                setDay(next);
+                setSearchParams({ day: next });
+              }}
+            />
+          </label>
+          {!isViewingToday ? (
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                const t = todayIST();
+                setDay(t);
+                setSearchParams({ day: t });
+              }}
+            >
+              Today
+            </button>
+          ) : null}
           <button
             type="button"
             className="ghost"
@@ -132,32 +164,43 @@ export default function Employee() {
       </div>
       <section className="monitor-card card">
         <h2>Live monitoring</h2>
-        <div className="video-wrap" ref={wrapRef} title="Click for fullscreen" onClick={toggleFullscreen}>
-          {feed ? <img id="feed" alt="Live camera overlay" src={feed} style={{ display: "block" }} /> : null}
-          {!feed ? (
-            <p className="muted">No live camera. The employee must be clocked in with the camera allowed in the browser.</p>
-          ) : null}
-          <span className="fs-hint">Click for fullscreen</span>
-        </div>
-        <p className="legend">
-          <span className="leg">
-            <span className="dot green" />
-            Desk zone
-          </span>
-          <span className="leg">
-            <span className="dot red" />
-            At desk
-          </span>
-          <span className="leg">
-            <span className="dot blue" />
-            Outside
-          </span>
-          <span className="leg hint">Same overlay the employee sees · click for fullscreen</span>
-        </p>
+        {isViewingToday ? (
+          <>
+            <div className="video-wrap" ref={wrapRef} title="Click for fullscreen" onClick={toggleFullscreen}>
+              {feed ? <img id="feed" alt="Live camera overlay" src={feed} style={{ display: "block" }} /> : null}
+              {!feed ? (
+                <p className="muted">No live camera. The employee must be clocked in with the camera allowed in the browser.</p>
+              ) : null}
+              <span className="fs-hint">Click for fullscreen</span>
+            </div>
+            <p className="legend">
+              <span className="leg">
+                <span className="dot green" />
+                Desk zone
+              </span>
+              <span className="leg">
+                <span className="dot red" />
+                At desk
+              </span>
+              <span className="leg">
+                <span className="dot blue" />
+                Outside
+              </span>
+              <span className="leg hint">Same overlay the employee sees · click for fullscreen</span>
+            </p>
+          </>
+        ) : (
+          <div className="video-wrap" style={{ minHeight: "130px", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc" }}>
+            <p className="muted" style={{ textAlign: "center", padding: "1.25rem", margin: 0 }}>
+              📅 Viewing historical activity record for <strong>{day}</strong>.<br />
+              Live camera monitoring is only active during today's live shift.
+            </p>
+          </div>
+        )}
       </section>
       <section className="split">
         <article className="card split-card">
-          <h2>Apps today</h2>
+          <h2>Apps {isViewingToday ? "today" : `on ${day}`}</h2>
           <div className="split-scroll">
             <ul className="apps">
               {(today.apps || []).length ? (
@@ -173,13 +216,13 @@ export default function Employee() {
                   </li>
                 ))
               ) : (
-                <li>No app time yet today</li>
+                <li>No app time recorded {isViewingToday ? "yet today" : `on ${day}`}</li>
               )}
             </ul>
           </div>
         </article>
         <article className="card split-card">
-          <h2>Recent activity</h2>
+          <h2>Recent activity ({isViewingToday ? "today" : day})</h2>
           <div className="split-scroll">
             <ol className="timeline">
               {groups.length ? (
@@ -197,7 +240,7 @@ export default function Employee() {
                   );
                 })
               ) : (
-                <li className="muted">No samples yet</li>
+                <li className="muted">No samples recorded {isViewingToday ? "yet today" : `on ${day}`}</li>
               )}
             </ol>
           </div>

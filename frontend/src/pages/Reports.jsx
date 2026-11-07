@@ -49,6 +49,7 @@ export default function Reports() {
               <th>Dept</th>
               <th>{data?.is_today ? "Now" : "Last that day"}</th>
               <th>Active</th>
+              <th style={{ minWidth: "200px" }}>Tracked apps</th>
               <th title="Share of active time in work apps vs other apps">Work apps %</th>
               <th title="Face visible while clocked in">Seated</th>
               <th title="No face while clocked in (away / sleep / offline). Seated + Idle = clock-in → clock-out">Idle</th>
@@ -60,13 +61,34 @@ export default function Reports() {
             {(data?.team || []).map((p) => (
               <tr key={p.id}>
                 <td>
-                  <Link to={`/hr/employee/${p.id}`}>{p.name}</Link>
+                  <Link to={`/hr/employee/${p.id}?day=${encodeURIComponent(csvDay)}`}>{p.name}</Link>
                 </td>
                 <td>{p.department}</td>
                 <td>
                   <Badge status={p.status} />
                 </td>
                 <td>{p.today.active}</td>
+                <td>
+                  {(p.today.apps || []).length ? (
+                    <div className="report-apps-tags">
+                      {p.today.apps.slice(0, 3).map((a) => (
+                        <span key={a.app} className="app-tag" title={`${a.app}: ${a.label}`}>
+                          {a.app} <small>({a.label})</small>
+                        </span>
+                      ))}
+                      {p.today.apps.length > 3 ? (
+                        <span
+                          className="app-tag-more"
+                          title={p.today.apps.slice(3).map((a) => `${a.app}: ${a.label}`).join(", ")}
+                        >
+                          +{p.today.apps.length - 3} more
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </td>
                 <td>{p.today.useful_pct}%</td>
                 <td>{p.today.seated}</td>
                 <td>{p.today.idle}</td>

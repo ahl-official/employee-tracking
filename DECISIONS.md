@@ -144,3 +144,20 @@
   1. Updated `Dockerfile` to explicitly copy `agent/`, `static/`, and `templates/` into the Docker image.
   2. Verified `main.py` embeds the full base64 agent payload directly inside the `.bat` file, making it 100% self-contained with zero external download requirements.
 - **Files Affected:** `Dockerfile`, `DECISIONS.md`.
+
+---
+
+## Decision 13: Date-Based Historical Tracked Apps & Activity Inspection for HR
+- **Date:** 2026-11-07
+- **Problem:**
+  1. HR could only view tracked apps for the current day ("today"). When viewing an employee's profile (`/hr/employee/:id`), there was no date picker to view past days.
+  2. The Daily Report table (`/hr/reports`) did not display the actual apps used by employees for that day.
+  3. Clicking an employee link from the Daily Report did not pass the selected date, resetting the view back to today.
+  4. CSV export did not include the specific tracked apps and duration breakdown.
+- **Decision:**
+  1. **Date Picker on Employee Detail View:** Added date selector, "Today" quick button, and `?day=YYYY-MM-DD` query parameter sync in `Employee.jsx`. HR can inspect all tracked apps, time bars, metrics, and activity timeline for any past date.
+  2. **Tracked Apps Column in Daily Report:** Added a "Tracked apps" column in `Reports.jsx` showing top apps used by each employee with time badges and "+N more" overflow.
+  3. **Date Preservation:** Preserved `?day=${day}` when clicking an employee from the Daily Report table.
+  4. **Historical Mode Camera Guard:** Replaced live webcam stream polling on historical dates with a clean informational notice, saving VPS CPU and bandwidth.
+  5. **CSV Export Apps Column:** Added `tracked_apps` column to `/hr/export.csv` containing semicolon-separated apps and durations for that date.
+- **Files Affected:** `frontend/src/pages/Employee.jsx`, `frontend/src/pages/Reports.jsx`, `frontend/src/index.css`, `main.py`, `DECISIONS.md`.
