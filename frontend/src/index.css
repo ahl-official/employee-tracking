@@ -1206,6 +1206,7 @@ button.linkish {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  align-items: center;
 }
 .app-tag {
   display: inline-flex;
@@ -1218,18 +1219,72 @@ button.linkish {
   color: #334155;
   border: 1px solid #e2e8f0;
   white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+}
+.app-tag:hover {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+  color: #0f172a;
 }
 .app-tag small {
   color: #64748b;
   font-size: 0.72rem;
 }
 .app-tag-more {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   font-size: 0.75rem;
-  padding: 2px 6px;
+  padding: 2px 7px;
   border-radius: 4px;
   background: #e2e8f0;
+  color: #1e293b;
+  cursor: pointer;
+  font-weight: 600;
+  border: 1px solid #cbd5e1;
+  font-family: inherit;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+}
+.app-tag-more:hover {
+  background: #cbd5e1;
+  color: #0f172a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.apps-modal {
+  width: min(500px, 92vw) !important;
+  max-width: 500px;
+  padding: 1.25rem 1.4rem;
+  border-radius: 14px;
+}
+.apps-modal-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.85rem;
   color: #475569;
-  cursor: help;
-  font-weight: 500;
+  margin: 0.85rem 0;
+}
+.apps-modal-summary strong {
+  color: #0f172a;
+  font-size: 0.95rem;
+}
+.apps-modal-scroll {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.apps-modal-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+.apps-modal-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
 }

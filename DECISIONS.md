@@ -161,3 +161,21 @@
   4. **Historical Mode Camera Guard:** Replaced live webcam stream polling on historical dates with a clean informational notice, saving VPS CPU and bandwidth.
   5. **CSV Export Apps Column:** Added `tracked_apps` column to `/hr/export.csv` containing semicolon-separated apps and durations for that date.
 - **Files Affected:** `frontend/src/pages/Employee.jsx`, `frontend/src/pages/Reports.jsx`, `frontend/src/index.css`, `main.py`, `DECISIONS.md`.
+
+---
+
+## Decision 14: Tracked Applications Interactive List Popup Modal in Daily Report
+- **Date:** 2026-11-07
+- **Problem:**
+  1. In the Daily Report table (`/hr/reports`), when an employee has more than 3 tracked apps, an overflow badge (`+N more`) is displayed.
+  2. Previously, the badge only showed a browser native title tooltip on hover, but users expected an interactive click popup modal to review the full detailed list of tracked apps and durations directly on the page without navigating away.
+- **Decision:**
+  1. Converted `+N more` and app tags into interactive buttons with cursor pointer and hover effects.
+  2. Clicking `+N more` (or any app tag) launches an accessible modal dialog popup (`apps-modal`).
+  3. The popup displays:
+     - Employee name & the chosen report date
+     - Total active working time for that day
+     - Complete list of tracked apps with proportional duration progress bars and formatted time badges
+     - Scrollable list with custom scrollbar for long app lists
+     - Dismissal via the '✕' button, clicking the backdrop, pressing `Escape`, or clicking 'Close'.
+- **Files Affected:** `frontend/src/pages/Reports.jsx`, `frontend/src/index.css`, `DECISIONS.md`.

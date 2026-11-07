@@ -6,6 +6,7 @@ import { Badge } from "../components/Badge";
 export default function Reports() {
   const [day, setDay] = useState(todayIST());
   const [data, setData] = useState(null);
+  const [selectedEmployeeApps, setSelectedEmployeeApps] = useState(null);
 
   const refresh = useCallback(async () => {
     const { ok, data: next } = await api(`/api/report?day=${encodeURIComponent(day)}`);
@@ -19,6 +20,15 @@ export default function Reports() {
     }, 5000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  useEffect(() => {
+    if (!selectedEmployeeApps) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") setSelectedEmployeeApps(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedEmployeeApps]);
 
   const csvDay = data?.day || day;
 
@@ -72,17 +82,39 @@ export default function Reports() {
                   {(p.today.apps || []).length ? (
                     <div className="report-apps-tags">
                       {p.today.apps.slice(0, 3).map((a) => (
-                        <span key={a.app} className="app-tag" title={`${a.app}: ${a.label}`}>
+                        <button
+                          key={a.app}
+                          type="button"
+                          className="app-tag"
+                          title={`${a.app}: ${a.label} — click to view all apps`}
+                          onClick={() =>
+                            setSelectedEmployeeApps({
+                              employeeName: p.name,
+                              apps: p.today.apps,
+                              day: csvDay,
+                              totalActive: p.today.active,
+                            })
+                          }
+                        >
                           {a.app} <small>({a.label})</small>
-                        </span>
+                        </button>
                       ))}
                       {p.today.apps.length > 3 ? (
-                        <span
+                        <button
+                          type="button"
                           className="app-tag-more"
-                          title={p.today.apps.slice(3).map((a) => `${a.app}: ${a.label}`).join(", ")}
+                          title="Click to view all tracked apps"
+                          onClick={() =>
+                            setSelectedEmployeeApps({
+                              employeeName: p.name,
+                              apps: p.today.apps,
+                              day: csvDay,
+                              totalActive: p.today.active,
+                            })
+                          }
                         >
                           +{p.today.apps.length - 3} more
-                        </span>
+                        </button>
                       ) : null}
                     </div>
                   ) : (
@@ -99,6 +131,101 @@ export default function Reports() {
           </tbody>
         </table>
       </div>
+
+      {selectedEmployeeApps && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setSelectedEmployeeApps(null)}
+          role="presentation"
+        >
+          <div
+            className="card modal-card apps-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="apps-modal-title"
+          >
+            <div className="modal-head">
+              <div>
+                <h2 id="apps-modal-title" style={{ margin: 0, fontSize: "1.15rem" }}>
+                  Tracked Applications
+                </h2>
+                <div className="muted" style={{ fontSize: "0.82rem", marginTop: "2px" }}>
+                  <strong>{selectedEmployeeApps.employeeName}</strong> · {selectedEmployeeApps.day}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setSelectedEmployeeApps(null)}
+                aria-label="Close modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="apps-modal-summary">
+              <span>Total Active Time:</span>
+              <strong>{selectedEmployeeApps.totalActive}</strong>
+            </div>
+
+            <div className="apps-modal-scroll">
+              <ul className="apps">
+                {selectedEmployeeApps.apps.map((a) => {
+                  const maxSec = Math.max(
+                    ...selectedEmployeeApps.apps.map((x) => x.seconds),
+                    1
+                  );
+                  const pct = Math.round((a.seconds / maxSec) * 100);
+                  return (
+                    <li key={a.app}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span
+                          style={{
+                            fontWeight: 500,
+                            fontSize: "0.88rem",
+                            display: "block",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                          title={a.app}
+                        >
+                          {a.app}
+                        </span>
+                        <span className="bar" style={{ marginTop: "4px" }}>
+                          <i style={{ width: `${pct}%` }} />
+                        </span>
+                      </div>
+                      <span
+                        style={{
+                          fontWeight: 600,
+                          fontSize: "0.85rem",
+                          color: "var(--muted)",
+                          marginLeft: "1rem",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {a.label}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: "1rem", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setSelectedEmployeeApps(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
