@@ -1087,7 +1087,7 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
     identity = {"required": False, "matched": True, "score": 0.0, "reason": "not_enrolled"}
     matched_box = None
     now_ts = time.time()
-    hold_seconds = float(getattr(config, "IDENTITY_HOLD_SECONDS", 420))
+    hold_seconds = float(getattr(config, "IDENTITY_HOLD_SECONDS", 900))
     face_seen_now = False
 
     if face_id.has_enrollment(user.id):
@@ -1963,10 +1963,10 @@ async def api_waha_webhook(request: Request, db: Session = Depends(get_db)):
         text = str(payload.get("body") or "").strip()
         from_phone = str(payload.get("from") or "")
         sender_clean = waha.clean_phone_number(from_phone)
-        lead_clean = waha.clean_phone_number(config.LEAD_WHATSAPP_PHONE)
+        lead_phones = waha.get_lead_phone_numbers()
 
-        # If lead phone is configured, only accept commands from authorized lead
-        if lead_clean and sender_clean != lead_clean:
+        # If lead phones are configured, only accept commands from authorized lead/HR
+        if lead_phones and sender_clean not in lead_phones:
             return {"ok": True, "ignored": "unauthorized sender"}
 
         # Match commands:

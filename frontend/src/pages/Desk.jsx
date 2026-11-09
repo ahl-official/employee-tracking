@@ -753,11 +753,11 @@ export default function Desk() {
           <strong>{today.active || "—"}</strong>
         </div>
         <div className="kpi">
-          <span>Break left</span>
-          <strong>{today.break_left || "30m"}</strong>
+          <span title="Daily break allowance remaining out of 1h">Break left</span>
+          <strong>{today.break_left || "1h"}</strong>
         </div>
         <div className="kpi">
-          <span title="No face while clocked in. Seated + Idle = clock-in → clock-out">Idle</span>
+          <span title="Unapproved away time exceeding 1h break allowance">Idle</span>
           <strong>{today.idle || "—"}</strong>
         </div>
         <div className="kpi">

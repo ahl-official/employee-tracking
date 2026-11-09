@@ -43,9 +43,25 @@ def verify_task_token(task_id: int, action: str, token: str) -> bool:
     return hmac.compare_digest(expected, str(token or "").strip())
 
 
+def get_lead_phone_numbers() -> list[str]:
+    """Parse one or multiple HR / Lead phone numbers from config (comma, semicolon, or space separated)."""
+    raw = getattr(config, "LEAD_WHATSAPP_PHONE", "") or ""
+    alt = getattr(config, "HR_WHATSAPP_PHONES", "") or ""
+    combined = f"{raw},{alt}"
+    phones: list[str] = []
+    for part in re.split(r"[,;\s]+", combined):
+        part = part.strip()
+        if not part:
+            continue
+        cleaned = clean_phone_number(part)
+        if cleaned and cleaned not in phones:
+            phones.append(cleaned)
+    return phones
+
+
 def is_waha_configured() -> bool:
-    """Check if WAHA URL and Lead phone number are configured."""
-    return bool(config.WAHA_API_URL and config.LEAD_WHATSAPP_PHONE)
+    """Check if WAHA URL and at least one Lead/HR phone number are configured."""
+    return bool(config.WAHA_API_URL and get_lead_phone_numbers())
 
 
 def send_whatsapp_message(phone: str, text: str) -> dict[str, Any]:
@@ -164,18 +180,33 @@ def notify_lead_task_request_async(
     requested_at: datetime,
     lead_phone: str | None = None,
 ) -> None:
-    """Dispatch single WhatsApp interactive button poll to lead in background thread."""
+    """Dispatch WhatsApp interactive button poll to all configured HR/leads in background thread."""
     def _worker():
-        send_task_approval_poll(
-            task_id=task_id,
-            employee_name=employee_name,
-            department=department,
-            reason=reason,
-            location=location,
-            expected_minutes=expected_minutes,
-            requested_at=requested_at,
-            lead_phone=lead_phone,
-        )
+        if lead_phone:
+            phones = [clean_phone_number(lead_phone)]
+        else:
+            phones = get_lead_phone_numbers()
+
+        if not phones:
+            logger.warning("No HR/lead phone numbers configured for movement approval")
+            return
+
+        for p in phones:
+            if not p:
+                continue
+            try:
+                send_task_approval_poll(
+                    task_id=task_id,
+                    employee_name=employee_name,
+                    department=department,
+                    reason=reason,
+                    location=location,
+                    expected_minutes=expected_minutes,
+                    requested_at=requested_at,
+                    lead_phone=p,
+                )
+            except Exception as exc:
+                logger.error(f"Failed sending WhatsApp poll to {p}: {exc}")
 
     threading.Thread(target=_worker, daemon=True).start()
 

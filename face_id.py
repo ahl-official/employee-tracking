@@ -176,7 +176,7 @@ def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[
     data = np.load(model_path(user_id))
     embeds = data["embeds"]
     boxes = detector.detect_faces(yunet, frame)
-    hold = float(getattr(config, "IDENTITY_HOLD_SECONDS", 420))
+    hold = float(getattr(config, "IDENTITY_HOLD_SECONDS", 900))
     now = time.time()
 
     if not boxes:

@@ -76,14 +76,14 @@ TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 HEARTBEAT_SECONDS = _int("HEARTBEAT_SECONDS", 4)
 IDLE_AFTER_SECONDS = _int("IDLE_AFTER_SECONDS", 60)
 AWAY_ALERT_SECONDS = _int("AWAY_ALERT_SECONDS", 900)
-BREAK_ALLOWANCE_SECONDS = _int("BREAK_ALLOWANCE_SECONDS", 30 * 60)
+BREAK_ALLOWANCE_SECONDS = _int("BREAK_ALLOWANCE_SECONDS", 60 * 60)
 OFFLINE_AFTER_SECONDS = _int("OFFLINE_AFTER_SECONDS", 120)
 # Treat heartbeat gaps longer than this as a possible disconnect
 SLEEP_GAP_SECONDS = _int("SLEEP_GAP_SECONDS", 45)
 # Still credit last face/away state across short gaps (Chrome throttles background tabs ~1/min)
-PRESENCE_GAP_GRACE_SECONDS = _int("PRESENCE_GAP_GRACE_SECONDS", 420)
-# Keep "present" for up to 7 minutes (420s) if face briefly leaves frame / looks away
-IDENTITY_HOLD_SECONDS = _int("IDENTITY_HOLD_SECONDS", 420)
+PRESENCE_GAP_GRACE_SECONDS = _int("PRESENCE_GAP_GRACE_SECONDS", 900)
+# Keep "present" for up to 15 minutes (900s) if face briefly leaves frame / looks away
+IDENTITY_HOLD_SECONDS = _int("IDENTITY_HOLD_SECONDS", 900)
 # Delete heartbeats older than this (keeps SQLite small). Reports only need recent days.
 HEARTBEAT_KEEP_DAYS = _int("HEARTBEAT_KEEP_DAYS", 14)
 # Delete acknowledged alerts older than this
@@ -99,6 +99,7 @@ WAHA_API_URL = os.getenv("WAHA_API_URL", "").rstrip("/")
 WAHA_API_KEY = os.getenv("WAHA_API_KEY", "").strip()
 WAHA_SESSION = os.getenv("WAHA_SESSION", "default").strip()
 LEAD_WHATSAPP_PHONE = os.getenv("LEAD_WHATSAPP_PHONE", "").strip()
+HR_WHATSAPP_PHONES = os.getenv("HR_WHATSAPP_PHONES", "").strip()
 
 WORK_START_HOUR = _int("WORK_START_HOUR", 9)
 WORK_END_HOUR = _int("WORK_END_HOUR", 19)

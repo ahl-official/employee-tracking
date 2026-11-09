@@ -150,11 +150,11 @@ export default function Employee() {
           <strong>{today.active || "—"}</strong>
         </div>
         <div className="kpi">
-          <span title="No face while clocked in. Seated + Idle = clock-in → clock-out">Idle</span>
+          <span title="Unapproved away time exceeding the 1h break allowance (after 15m face buffer)">Idle</span>
           <strong>{today.idle || "—"}</strong>
         </div>
         <div className="kpi">
-          <span>Break used</span>
+          <span title="Break used today out of 1h allowance">Break used</span>
           <strong>{today.break_used || "0m"}</strong>
         </div>
         <div className="kpi">

@@ -62,8 +62,8 @@ export default function Reports() {
               <th style={{ minWidth: "200px" }}>Tracked apps</th>
               <th title="Share of active time in work apps vs other apps">Work apps %</th>
               <th title="Face visible while clocked in">Seated</th>
-              <th title="No face while clocked in (away / sleep / offline). Seated + Idle = clock-in → clock-out">Idle</th>
-              <th>Break used</th>
+              <th title="Unapproved away time exceeding the 1h daily break allowance (after 15m face buffer).">Idle</th>
+              <th title="Personal break time used out of 1h daily allowance">Break used</th>
               <th title="Seated ÷ 9h workday">Presence %</th>
             </tr>
           </thead>

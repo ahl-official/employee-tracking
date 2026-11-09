@@ -26,7 +26,7 @@ CONFIDENCE = 0.18
 NMS = 0.45
 PERSON_CLASS = 0
 FACE_SCORE = 0.45
-HOLD_SECONDS = float(getattr(config, "IDENTITY_HOLD_SECONDS", 420))
+HOLD_SECONDS = float(getattr(config, "IDENTITY_HOLD_SECONDS", 900))
 _hold_until = 0.0
 
 

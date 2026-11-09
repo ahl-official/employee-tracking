@@ -447,7 +447,7 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         # present is None / unknown — agent heartbeat before camera or between frames
         add_app_bucket(use)
 
-    grace = float(getattr(config, "PRESENCE_GAP_GRACE_SECONDS", 420))
+    grace = float(getattr(config, "PRESENCE_GAP_GRACE_SECONDS", 900))
 
     for i, row in enumerate(rows):
         t0 = as_dt(row.created_at)
@@ -461,12 +461,12 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             t1 = t0 + timedelta(seconds=gap)
         if gap > sleep_gap:
             # Chrome often throttles the My desk tab to ~60s or more.
-            # Keep last face/away state through gaps up to grace (7 mins).
+            # Keep last face/away state through gaps up to grace (15 mins).
             if gap <= grace:
                 credit(row, gap, t0, t1)
             else:
-                # Long gap (> 7 min, e.g. disconnect, sleep, camera off):
-                # If face was present at t0, credit up to grace hold (7 mins); rest is Idle/Away.
+                # Long gap (> 15 min, e.g. disconnect, sleep, camera off):
+                # If face was present at t0, credit up to grace hold (15 mins); rest is Idle/Away.
                 if row.present == 1:
                     credit(row, grace, t0, t0 + timedelta(seconds=grace))
                 else:
@@ -504,16 +504,19 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
         task_away_s = max(0.0, task_total_s - task_seated_s)
         task_away_s = min(task_away_s, non_seated_s)
 
-        # True Idle = non-seated time that was NOT approved task time
-        idle_s = max(0.0, non_seated_s - task_away_s)
+        # Unapproved away time = non-seated time that was NOT approved task time
+        unapproved_away_s = max(0.0, non_seated_s - task_away_s)
 
         # Official tasks count toward productive work
         work += task_away_s
 
-        # Break allowance: only true idle / unapproved away time consumes break
+        # Break allowance (default 1 hour): reduce break time
         allowance = float(config.BREAK_ALLOWANCE_SECONDS)
-        break_used = min(idle_s, allowance)
-        break_left = max(0.0, allowance - idle_s)
+        break_used = min(unapproved_away_s, allowance)
+        break_left = max(0.0, allowance - unapproved_away_s)
+
+        # If break gets over, excess unapproved away time is put into idle time
+        idle_s = max(0.0, unapproved_away_s - allowance)
 
         # Presence %: (Seated + Approved Task Work) / Clocked
         productive_s = min(total_clocked, seated_s + task_away_s)

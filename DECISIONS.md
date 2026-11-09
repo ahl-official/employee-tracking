@@ -179,3 +179,24 @@
      - Scrollable list with custom scrollbar for long app lists
      - Dismissal via the '✕' button, clicking the backdrop, pressing `Escape`, or clicking 'Close'.
 - **Files Affected:** `frontend/src/pages/Reports.jsx`, `frontend/src/index.css`, `DECISIONS.md`.
+
+---
+
+## Decision 15: Multiple HR Phone Numbers for WhatsApp Step-Away Approvals, 15-Minute Presence Buffer, 1-Hour Break Allowance & Idle Time Partitioning
+- **Date:** 2026-11-09
+- **Problem:**
+  1. WAHA step-away/movement approval was restricted to a single phone number (`LEAD_WHATSAPP_PHONE`). When entering multiple HR numbers separated by commas, the parser failed to normalize them.
+  2. The face absence buffer was previously 7 minutes (`IDENTITY_HOLD_SECONDS = 420`), causing employees stepping away briefly for water/restroom to flip into Break/Away too quickly.
+  3. The daily break allowance was 30 minutes (`BREAK_ALLOWANCE_SECONDS = 1800`), whereas company policy requires a 1-hour (60 minute) break budget.
+  4. Unapproved absence was previously categorized directly into Idle regardless of available break balance. The expected policy is:
+     - Absences up to 15 minutes are buffered as present (not counted against idle or break).
+     - Absences exceeding 15 minutes mark the employee as Away.
+     - The away time is charged against their 1-hour daily Break Allowance (`break_used` increases, `break_left` decreases).
+     - Only when the 1-hour break allowance is completely exhausted does additional unapproved away time get accumulated into Idle time.
+- **Decision:**
+  1. **Multiple HR Numbers Dispatch:** Added `get_lead_phone_numbers()` in `waha.py` to parse comma/space/semicolon-separated numbers from `LEAD_WHATSAPP_PHONE` and `HR_WHATSAPP_PHONES`. Dispatches interactive WhatsApp approval polls (`[ ✅ Approve ]` and `[ ❌ Decline ]`) to all configured HR numbers simultaneously. Webhook commands and poll votes authenticate any authorized HR sender.
+  2. **15-Minute Presence Buffer:** Increased `IDENTITY_HOLD_SECONDS` and `PRESENCE_GAP_GRACE_SECONDS` from 420 to 900 seconds (15 minutes). If the face is not visible for up to 15 minutes, the employee remains counted as seated/present.
+  3. **1-Hour Break Allowance:** Increased `BREAK_ALLOWANCE_SECONDS` from 1800 to 3600 seconds (60 minutes).
+  4. **Strict Break vs. Idle Partitioning:** Updated `analytics.py` so that unapproved away time first consumes the 1-hour break allowance (`break_used = min(away, 3600)`). Any excess away time beyond the 1-hour allowance is placed into `idle_s`.
+  5. **UI Consistency:** Updated default placeholder in `Desk.jsx` to `1h` break left and refined tooltips across `Reports.jsx`, `Employee.jsx`, and `Desk.jsx`.
+- **Files Affected:** `config.py`, `waha.py`, `main.py`, `detector.py`, `face_id.py`, `analytics.py`, `frontend/src/pages/Desk.jsx`, `frontend/src/pages/Reports.jsx`, `frontend/src/pages/Employee.jsx`, `DECISIONS.md`.
