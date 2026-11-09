@@ -23,6 +23,7 @@ import requests
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.ini"
 LOG_PATH = ROOT / "agent.log"
+PID_PATH = ROOT / "desktrack_agent.pid"
 AGENT_RAW_URL = (
     "https://raw.githubusercontent.com/ahl-official/employee-tracking/main/agent/desktrack_agent.py"
 )
@@ -41,6 +42,26 @@ def log(msg: str) -> None:
         pass
     try:
         print(line, flush=True)
+    except Exception:
+        pass
+
+
+def kill_previous_instance() -> None:
+    """Kill any previous agent instance recorded in the pidfile so we don't double-track."""
+    if PID_PATH.is_file():
+        try:
+            old_pid = int(PID_PATH.read_text(encoding="utf-8").strip())
+            if old_pid != os.getpid():
+                import signal
+                os.kill(old_pid, signal.SIGTERM)
+                time.sleep(0.4)
+        except Exception:
+            pass
+
+
+def save_pid() -> None:
+    try:
+        PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
     except Exception:
         pass
 
@@ -161,6 +182,8 @@ def ensure_clocked_in(session: requests.Session, base: str) -> bool:
 
 
 def main() -> None:
+    kill_previous_instance()
+    save_pid()
     cfg = load_config()
     base = cfg.get("server", "url", fallback="http://127.0.0.1:8000").rstrip("/")
     maybe_self_update(base)

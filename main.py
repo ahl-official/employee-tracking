@@ -472,11 +472,12 @@ def api_session(request: Request, db: Session = Depends(get_db)):
 
 @app.post("/api/login")
 def api_login(request: Request, payload: dict = Body(...), db: Session = Depends(get_db)):
+    from sqlalchemy import func
     from passwords import hash_password, needs_rehash, verify_password
 
     username = str(payload.get("username") or "").strip().lower()
     password = str(payload.get("password") or "")
-    user = db.query(User).filter_by(username=username).first()
+    user = db.query(User).filter(func.lower(User.username) == username).first()
     if not user or not verify_password(password, user.password):
         return JSONResponse({"ok": False, "error": "Wrong username or password."}, status_code=401)
     if needs_rehash(user.password):
@@ -785,11 +786,16 @@ def api_agent_login(request: Request, payload: dict = Body(...), db: Session = D
     Agent login. Accepts the frozen agent_password (unchanged when HR resets website password)
     or the current website password (then freezes it as agent_password).
     """
+    from sqlalchemy import func
     from passwords import hash_password, verify_password
 
-    username = str(payload.get("username") or "").strip().lower()
+    raw_username = str(payload.get("username") or "").strip()
     password = str(payload.get("password") or "")
-    user = db.query(User).filter_by(username=username).first()
+    user = (
+        db.query(User)
+        .filter(func.lower(User.username) == raw_username.lower())
+        .first()
+    )
     if not user or user.role != "employee":
         return JSONResponse({"ok": False, "error": "Wrong username or password."}, status_code=401)
 
@@ -859,10 +865,10 @@ def _build_connector_bat(target_user: User, request: Request, db: Session) -> st
 
     username = target_user.username
 
-    # Ensure a persistent agent token
-    if not target_user.agent_password or target_user.agent_password.startswith("$"):
+    # Ensure a persistent dedicated agent token (must start with dt_)
+    if not target_user.agent_password or not target_user.agent_password.startswith("dt_"):
         import secrets
-        target_user.agent_password = "dt_" + secrets.token_urlsafe(20)
+        target_user.agent_password = "dt_" + secrets.token_urlsafe(24)
         db.commit()
     agent_password = target_user.agent_password
 
@@ -895,9 +901,9 @@ Write-Host "Employee: {username}" -ForegroundColor Yellow
 Write-Host "Server: {server_url}" -ForegroundColor Gray
 Write-Host ""
 
-$ServerUrl = "{server_url}"
-$Username = "{username}"
-$AgentPassword = "{agent_password}"
+$ServerUrl = '{server_url}'
+$Username = '{username}'
+$AgentPassword = '{agent_password}'
 
 $InstallDir = "$env:APPDATA\\DeskTrackAgent"
 if (!(Test-Path $InstallDir)) {{
@@ -968,7 +974,16 @@ if (!(Test-Path $pythonwExe)) {{
 }}
 
 # 6. Stop any existing background agent instances before launching
-Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" -or $_.CommandLine -like "*desktrack_agent.py*" }} | Stop-Process -Force -ErrorAction SilentlyContinue
+$pidFile = "$InstallDir\\desktrack_agent.pid"
+if (Test-Path $pidFile) {{
+    try {{
+        $oldPid = [int](Get-Content -Path $pidFile -TotalCount 1)
+        if ($oldPid -gt 0) {{
+            Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+        }}
+    }} catch {{}}
+}}
+Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" }} | Stop-Process -Force -ErrorAction SilentlyContinue
 
 # 7. Inject Windows startup registry entry for automatic start on login
 $RegPath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
@@ -988,8 +1003,16 @@ Start-Process -FilePath $pythonwExe -ArgumentList "`"$InstallDir\\desktrack_agen
 
 # 10. Verify background agent started
 Start-Sleep -Seconds 2
-$agentRunning = Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" -or $_.CommandLine -like "*desktrack_agent.py*" }}
-if (!$agentRunning) {{
+$agentStarted = $false
+if (Test-Path $pidFile) {{
+    try {{
+        $newPid = [int](Get-Content -Path $pidFile -TotalCount 1)
+        if ($newPid -gt 0 -and (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) {{
+            $agentStarted = $true
+        }}
+    }} catch {{}}
+}}
+if (!$agentStarted) {{
     # Fallback to python.exe with hidden window
     Start-Process -FilePath $pyCmdPath -ArgumentList "`"$InstallDir\\desktrack_agent.py`"" -WindowStyle Hidden -WorkingDirectory $InstallDir
 }}

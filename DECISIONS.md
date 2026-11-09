@@ -239,3 +239,18 @@
   2. Updated `weekly_report.py` to use `f"📅 Days active : {days_worked}/{config.WORK_DAYS_PER_WEEK}"`.
   3. Updated `.env.example` to document `WORK_DAYS_PER_WEEK=6`.
 - **Files Affected:** `config.py`, `weekly_report.py`, `.env.example`, `DECISIONS.md`.
+
+---
+
+## Decision 19: Case-Insensitive Agent Auth, Dedicated dt_ Tokens & Workstation PID Tracking
+- **Date:** 2026-11-09
+- **Problem:**
+  1. Employees with mixed/capitalized usernames (e.g. `Priyanka`, `Hisham`) failed agent login with `401 Unauthorized` because SQLite's default case-sensitive `filter_by(username=username)` did not match lowercased input.
+  2. If an employee's `agent_password` was initialized with the PBKDF2 website password hash (`pbkdf2:sha256:...`), the `.bat` generator failed to replace it because it only checked `startswith("$")`. The embedded hash contained `$` characters, which PowerShell evaluated as empty variables in double quotes, corrupting the token.
+  3. When an agent was already running in a retry loop with bad credentials, re-running the `.bat` did not terminate the old process because PowerShell 5.1's `Get-Process` lacks a `.CommandLine` property.
+- **Decision:**
+  1. **Case-Insensitive Auth:** Used SQLAlchemy `func.lower(User.username) == username.lower()` in both `/api/agent/login` and `/api/login`.
+  2. **Dedicated Token Enforcement:** Updated `_build_connector_bat` to enforce `if not target_user.agent_password or not target_user.agent_password.startswith("dt_"):`, guaranteeing clean urlsafe alphanumeric tokens (`dt_<token>`).
+  3. **Verbatim PowerShell Strings:** Enclosed `$ServerUrl`, `$Username`, and `$AgentPassword` in single quotes (`'...'`) in the generated connector script.
+  4. **Workstation PID File Tracking:** Added `desktrack_agent.pid` management in `desktrack_agent.py` and the `.bat` script, reliably terminating old background instances before launching updated ones.
+- **Files Affected:** `main.py`, `agent/desktrack_agent.py`, `DECISIONS.md`.
