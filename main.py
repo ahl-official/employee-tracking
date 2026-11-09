@@ -36,7 +36,7 @@ import face_id
 import waha
 import weekly_report
 from database import init_db, purge_old_data, utc_now
-from models import Alert, Base, Heartbeat, SessionLocal, User, WorkSession, TaskRequest, engine
+from models import Alert, Base, Heartbeat, SessionLocal, User, WorkSession, TaskRequest, engine, ensure_tables
 
 PREVIEW_FRAMES: dict[int, bytes] = {}
 PREVIEW_META: dict[int, dict] = {}
@@ -994,7 +994,7 @@ Set-ItemProperty -Path $RegPath -Name "DeskTrackAgent" -Value $LaunchCommand -Er
 $StartupDir = [Environment]::GetFolderPath('Startup')
 if (Test-Path $StartupDir) {{
     $VbsPath = Join-Path $StartupDir "DeskTrackAgent.vbs"
-    $VbsCode = "Set WshShell = CreateObject(`"WScript.Shell`")`nWshShell.Run `"`"`"$pythonwExe`"`" `"`"$InstallDir\desktrack_agent.py`"`"`, 0, False"
+    $VbsCode = "Set WshShell = CreateObject(`"WScript.Shell`")`nWshShell.Run `"`"`"$pythonwExe`"`" `"`"$InstallDir\\desktrack_agent.py`"`"`, 0, False"
     [System.IO.File]::WriteAllText($VbsPath, $VbsCode)
 }}
 
@@ -1618,7 +1618,7 @@ def api_tasks_request(request: Request, payload: dict = Body(...), db: Session =
 
     try:
         # Self-healing: ensure TaskRequest table exists in database
-        Base.metadata.create_all(bind=db.get_bind())
+        ensure_tables(db.get_bind())
 
         # Cancel any older pending requests
         db.query(TaskRequest).filter_by(user_id=user.id, status="pending").update({"status": "cancelled"})
@@ -1677,7 +1677,7 @@ def api_tasks_end(task_id: int, request: Request, db: Session = Depends(get_db))
         return JSONResponse({"ok": False, "error": "Unauthorized. Please log in."}, status_code=401)
 
     try:
-        Base.metadata.create_all(bind=db.get_bind())
+        ensure_tables(db.get_bind())
         task = db.get(TaskRequest, task_id)
         if not task:
             return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
@@ -1702,7 +1702,7 @@ def api_tasks_cancel(task_id: int, request: Request, db: Session = Depends(get_d
         return JSONResponse({"ok": False, "error": "Unauthorized. Please log in."}, status_code=401)
 
     try:
-        Base.metadata.create_all(bind=db.get_bind())
+        ensure_tables(db.get_bind())
         task = db.get(TaskRequest, task_id)
         if not task:
             return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
@@ -1724,7 +1724,7 @@ def api_tasks_pending(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
 
     try:
-        Base.metadata.create_all(bind=db.get_bind())
+        ensure_tables(db.get_bind())
         pending = (
             db.query(TaskRequest)
             .filter(TaskRequest.status == "pending")
@@ -1757,7 +1757,7 @@ def api_tasks_approve(task_id: int, request: Request, db: Session = Depends(get_
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
 
     try:
-        Base.metadata.create_all(bind=db.get_bind())
+        ensure_tables(db.get_bind())
         task = db.get(TaskRequest, task_id)
         if not task:
             return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
@@ -1786,7 +1786,7 @@ def api_tasks_reject(task_id: int, request: Request, payload: dict = Body({}), d
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
 
     try:
-        Base.metadata.create_all(bind=db.get_bind())
+        ensure_tables(db.get_bind())
         task = db.get(TaskRequest, task_id)
         if not task:
             return JSONResponse({"ok": False, "error": "Task not found."}, status_code=404)
@@ -1902,7 +1902,7 @@ def api_tasks_quick_approve(task_id: int, request: Request, token: str = "", db:
     if not waha.verify_task_token(task_id, "approve", token):
         return HTMLResponse(waha_action_html("Invalid or Expired Link", "This approval link is invalid or has expired.", False), status_code=403)
 
-    Base.metadata.create_all(bind=db.get_bind())
+    ensure_tables(db.get_bind())
     task = db.get(TaskRequest, task_id)
     if not task:
         return HTMLResponse(waha_action_html("Task Not Found", "The requested task could not be found.", False), status_code=404)
@@ -1936,7 +1936,7 @@ def api_tasks_quick_reject(task_id: int, request: Request, token: str = "", db: 
     if not waha.verify_task_token(task_id, "reject", token):
         return HTMLResponse(waha_action_html("Invalid or Expired Link", "This link is invalid or has expired.", False), status_code=403)
 
-    Base.metadata.create_all(bind=db.get_bind())
+    ensure_tables(db.get_bind())
     task = db.get(TaskRequest, task_id)
     if not task:
         return HTMLResponse(waha_action_html("Task Not Found", "The requested task could not be found.", False), status_code=404)
@@ -1984,7 +1984,7 @@ async def api_waha_webhook(request: Request, db: Session = Depends(get_db)):
         else:
             return {"ok": True, "ignored": "unrecognized vote option"}
 
-        Base.metadata.create_all(bind=db.get_bind())
+        ensure_tables(db.get_bind())
         task = (
             db.query(TaskRequest)
             .filter(TaskRequest.status == "pending")
@@ -2026,7 +2026,7 @@ async def api_waha_webhook(request: Request, db: Session = Depends(get_db)):
         m_word = re.match(r"^(approve|approved|accept|accepted|yes|ok|done|yep|reject|rejected|decline|declined|no)$", text_clean, re.IGNORECASE)
 
         if m_id or m_word:
-            Base.metadata.create_all(bind=db.get_bind())
+            ensure_tables(db.get_bind())
             cmd = (m_id.group(1) if m_id else m_word.group(1)).lower()
             if m_id:
                 task_id = int(m_id.group(2))

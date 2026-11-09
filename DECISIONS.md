@@ -254,3 +254,16 @@
   3. **Verbatim PowerShell Strings:** Enclosed `$ServerUrl`, `$Username`, and `$AgentPassword` in single quotes (`'...'`) in the generated connector script.
   4. **Workstation PID File Tracking:** Added `desktrack_agent.pid` management in `desktrack_agent.py` and the `.bat` script, reliably terminating old background instances before launching updated ones.
 - **Files Affected:** `main.py`, `agent/desktrack_agent.py`, `DECISIONS.md`.
+
+---
+
+## Decision 20: SQLite Concurrency Hardening (30s Driver Timeout & Idempotent Schema Creation)
+- **Date:** 2026-11-09
+- **Problem:**
+  1. Multiple employee machines sending concurrent `/api/me/track` heartbeats occasionally triggered `sqlite3.OperationalError: database is locked`.
+  2. Python's `sqlite3` driver defaulted to a short 5-second busy timeout.
+  3. Multiple task endpoints repeatedly called `Base.metadata.create_all()` on live HTTP requests, executing heavy DDL schema queries that acquired exclusive SQLite table locks.
+- **Decision:**
+  1. Configured `connect_args={"check_same_thread": False, "timeout": 30}` in `models.py` and set `PRAGMA busy_timeout=30000;`.
+  2. Replaced repetitive `Base.metadata.create_all` calls in `main.py` with an idempotent `ensure_tables()` function that runs at most once per process lifetime, eliminating DDL lock contention.
+- **Files Affected:** `models.py`, `main.py`, `DECISIONS.md`.

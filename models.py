@@ -88,7 +88,7 @@ class TaskRequest(Base):
     approver: Mapped[User | None] = relationship("User", foreign_keys=[approver_id])
 
 
-connect_args = {"check_same_thread": False} if "sqlite" in config.DATABASE_URL else {}
+connect_args = {"check_same_thread": False, "timeout": 30} if "sqlite" in config.DATABASE_URL else {}
 engine = create_engine(config.DATABASE_URL, connect_args=connect_args)
 
 if "sqlite" in config.DATABASE_URL:
@@ -97,8 +97,19 @@ if "sqlite" in config.DATABASE_URL:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute("PRAGMA synchronous=NORMAL;")
-        cursor.execute("PRAGMA busy_timeout=10000;")
+        cursor.execute("PRAGMA busy_timeout=30000;")
         cursor.close()
 
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+_TABLES_ENSURED = False
+
+
+def ensure_tables(bind=None) -> None:
+    """Idempotent table creation — runs once to prevent locking SQLite on live endpoints."""
+    global _TABLES_ENSURED
+    if not _TABLES_ENSURED:
+        Base.metadata.create_all(bind=bind or engine)
+        _TABLES_ENSURED = True
+
 
