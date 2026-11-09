@@ -845,16 +845,8 @@ def static_agent_reqs():
     return PlainTextResponse(path.read_text(encoding="utf-8"), media_type="text/plain")
 
 
-@app.get("/api/employee/download-launcher", response_class=PlainTextResponse)
-def generate_one_click_launcher(request: Request, db: Session = Depends(get_db)):
-    """
-    Generates a dynamic 1-click Windows PowerShell script tailored specifically to the logged-in employee.
-    The script auto-detects/installs Python, downloads the agent, logs in, and auto-starts silently in the background.
-    """
-    user = require(request, db, "employee")
-    if not user:
-        return PlainTextResponse("Unauthorized", status_code=401)
-
+def _build_connector_bat(target_user: User, request: Request, db: Session) -> str:
+    """Builds a self-contained 1-click Windows connector .bat file for a given employee."""
     # Determine public URL
     forwarded_proto = request.headers.get("x-forwarded-proto") or request.url.scheme
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
@@ -865,14 +857,14 @@ def generate_one_click_launcher(request: Request, db: Session = Depends(get_db))
     else:
         server_url = (getattr(config, "PUBLIC_URL", "") or "http://127.0.0.1:8000").rstrip("/")
 
-    username = user.username
+    username = target_user.username
 
     # Ensure a persistent agent token
-    if not user.agent_password or user.agent_password.startswith("$"):
+    if not target_user.agent_password or target_user.agent_password.startswith("$"):
         import secrets
-        user.agent_password = "dt_" + secrets.token_urlsafe(20)
+        target_user.agent_password = "dt_" + secrets.token_urlsafe(20)
         db.commit()
-    agent_password = user.agent_password
+    agent_password = target_user.agent_password
 
     import base64
     agent_path = AGENT_DIR / "desktrack_agent.py"
@@ -881,7 +873,7 @@ def generate_one_click_launcher(request: Request, db: Session = Depends(get_db))
     else:
         agent_code_b64 = ""
 
-    bat_script = f"""@echo off
+    return f"""@echo off
 setlocal
 title DeskTrack 1-Click Auto Connector
 echo ==========================================
@@ -967,31 +959,78 @@ if ($LASTEXITCODE -ne 0) {{
 # 4. Initialize configuration automatically (no user input needed)
 Start-Process -FilePath $pyCmd -ArgumentList "`"$InstallDir\\desktrack_agent.py`" `"$ServerUrl`" `"$Username`" `"$AgentPassword`"" -Wait -WindowStyle Hidden
 
-# 5. Stop any existing background agent instances before launching
-Get-Process pythonw -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" -or $_.CommandLine -like "*desktrack_agent.py*" }} | Stop-Process -Force -ErrorAction SilentlyContinue
+# 5. Resolve pythonw / python executable path
+$pyCmdPath = (Get-Command $pyCmd -ErrorAction SilentlyContinue).Source
+$pyDir = Split-Path $pyCmdPath
+$pythonwExe = Join-Path $pyDir "pythonw.exe"
+if (!(Test-Path $pythonwExe)) {{
+    $pythonwExe = $pyCmdPath
+}}
 
-# 6. Inject Windows startup registry entry for automatic start on login
+# 6. Stop any existing background agent instances before launching
+Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" -or $_.CommandLine -like "*desktrack_agent.py*" }} | Stop-Process -Force -ErrorAction SilentlyContinue
+
+# 7. Inject Windows startup registry entry for automatic start on login
 $RegPath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-$LaunchCommand = "pythonw.exe `"$InstallDir\\desktrack_agent.py`""
-Set-ItemProperty -Path $RegPath -Name "DeskTrackAgent" -Value $LaunchCommand
+$LaunchCommand = "`"$pythonwExe`" `"$InstallDir\\desktrack_agent.py`""
+Set-ItemProperty -Path $RegPath -Name "DeskTrackAgent" -Value $LaunchCommand -ErrorAction SilentlyContinue
 
-# 7. Launch background agent immediately
-Start-Process -FilePath "pythonw" -ArgumentList "`"$InstallDir\\desktrack_agent.py`"" -WorkingDirectory $InstallDir
+# 8. Create VBScript runner in Windows Startup folder (guaranteed to launch on reboot without UAC or admin)
+$StartupDir = [Environment]::GetFolderPath('Startup')
+if (Test-Path $StartupDir) {{
+    $VbsPath = Join-Path $StartupDir "DeskTrackAgent.vbs"
+    $VbsCode = "Set WshShell = CreateObject(`"WScript.Shell`")`nWshShell.Run `"`"`"$pythonwExe`"`" `"`"$InstallDir\desktrack_agent.py`"`"`, 0, False"
+    [System.IO.File]::WriteAllText($VbsPath, $VbsCode)
+}}
+
+# 9. Launch background agent immediately
+Start-Process -FilePath $pythonwExe -ArgumentList "`"$InstallDir\\desktrack_agent.py`"" -WorkingDirectory $InstallDir
+
+# 10. Verify background agent started
+Start-Sleep -Seconds 2
+$agentRunning = Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" -or $_.CommandLine -like "*desktrack_agent.py*" }}
+if (!$agentRunning) {{
+    # Fallback to python.exe with hidden window
+    Start-Process -FilePath $pyCmdPath -ArgumentList "`"$InstallDir\\desktrack_agent.py`"" -WindowStyle Hidden -WorkingDirectory $InstallDir
+}}
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "   Connected Successfully!               " -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
-Write-Host "All browser tabs (WhatsApp, Figma, GitHub, etc.) and apps are now being tracked." -ForegroundColor White
-Write-Host "This runs quietly in the background and starts automatically on Windows login." -ForegroundColor Gray
-Start-Sleep -Seconds 3
+Write-Host "Desktop tracker is active and running in background." -ForegroundColor Green
+Write-Host "All apps (Chrome, CRM, Excel, WhatsApp, etc.) are now being tracked." -ForegroundColor White
+Write-Host "Starts automatically on Windows login." -ForegroundColor Gray
+Start-Sleep -Seconds 4
 """
 
+
+@app.get("/api/employee/download-launcher", response_class=PlainTextResponse)
+def generate_one_click_launcher(request: Request, db: Session = Depends(get_db)):
+    """Generates a dynamic 1-click Windows connector tailored for the logged-in employee."""
+    user = require(request, db, "employee")
+    if not user:
+        return PlainTextResponse("Unauthorized", status_code=401)
+    bat_script = _build_connector_bat(user, request, db)
     return PlainTextResponse(
         content=bat_script,
-        headers={
-            "Content-Disposition": "attachment; filename=Connect-DeskTrack.bat"
-        },
+        headers={"Content-Disposition": f"attachment; filename=Connect-{user.username}.bat"},
+    )
+
+
+@app.get("/api/hr/download-launcher/{user_id}", response_class=PlainTextResponse)
+def hr_download_employee_launcher(user_id: int, request: Request, db: Session = Depends(get_db)):
+    """Allows HR/admin to download the 1-click PC connector for ANY employee to set up their PC."""
+    hr_user = require(request, db, "hr")
+    if not hr_user:
+        return PlainTextResponse("Unauthorized", status_code=401)
+    target_user = db.get(User, user_id)
+    if not target_user:
+        return PlainTextResponse("Employee not found", status_code=404)
+    bat_script = _build_connector_bat(target_user, request, db)
+    return PlainTextResponse(
+        content=bat_script,
+        headers={"Content-Disposition": f"attachment; filename=Connect-{target_user.username}.bat"},
     )
 
 

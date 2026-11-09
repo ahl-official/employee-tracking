@@ -116,14 +116,15 @@ def load_config() -> configparser.ConfigParser:
     return cfg
 
 
-def maybe_self_update() -> None:
+def maybe_self_update(base: str = "") -> None:
     try:
-        with urllib.request.urlopen(AGENT_RAW_URL, timeout=20) as res:
+        url = f"{base}/static/agent/desktrack_agent.py" if base else AGENT_RAW_URL
+        with urllib.request.urlopen(url, timeout=5) as res:
             remote = res.read()
         local = Path(__file__).read_bytes()
         if remote and remote != local and b"def main" in remote:
             Path(__file__).write_bytes(remote)
-            log("Updated agent from GitHub — restarting…")
+            log("Updated agent from server — restarting…")
             os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]])
     except Exception as exc:
         log(f"Self-update skipped ({exc})")
@@ -160,9 +161,9 @@ def ensure_clocked_in(session: requests.Session, base: str) -> bool:
 
 
 def main() -> None:
-    maybe_self_update()
     cfg = load_config()
     base = cfg.get("server", "url", fallback="http://127.0.0.1:8000").rstrip("/")
+    maybe_self_update(base)
     username = cfg.get("auth", "username", fallback="").strip()
     password = cfg.get("auth", "password", fallback="")
     interval = cfg.getfloat("agent", "interval_seconds", fallback=3.0)

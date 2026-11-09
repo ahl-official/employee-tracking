@@ -237,3 +237,4 @@ npm run build
 3. **WAHA Interactive Poll Webhook:** WAHA sends poll votes as `event: "poll.vote"` or with `vote` in payload. The backend auto-resolves the latest pending request when a button is clicked.
 4. **Camera HTTPS Requirement:** Browsers strictly block webcam access on insecure HTTP (except `localhost`). Production must always be accessed via `https://`.
 5. **SQLite WAL Concurrency:** Database file is stored at `/app/data/office.db` on the VPS volume. WAL mode ensures that live heartbeats from 50+ users do not cause database lock timeouts.
+
