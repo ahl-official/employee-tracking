@@ -27,7 +27,7 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY analytics.py config.py database.py detector.py face_id.py main.py models.py passwords.py waha.py ./
+COPY analytics.py config.py database.py detector.py face_id.py main.py models.py passwords.py waha.py weekly_report.py ./
 COPY agent/ ./agent/
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
