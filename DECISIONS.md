@@ -226,3 +226,16 @@
   1. **Dual Startup Persistence:** In the `.bat` installer, resolved the full absolute path to `pythonw.exe` (or `python.exe`) and installed a silent VBScript launcher into the **Windows Startup folder** (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DeskTrackAgent.vbs`) alongside the registry key, guaranteeing the agent starts invisibly every time Windows boots.
   2. **Employee Self-Service Download:** Kept connector `.bat` download exclusive to the employee portal.
 - **Files Affected:** `main.py`, `agent/desktrack_agent.py`, `DECISIONS.md`.
+
+---
+
+## Decision 18: Configurable Work Week Baseline (6-Day Working Week Default)
+- **Date:** 2026-11-09
+- **Problem:**
+  1. The weekly report previously hardcoded a 5-day work week baseline (`{days_worked}/5`).
+  2. The organization follows a 6-day working week (Monday through Saturday).
+- **Decision:**
+  1. Added `WORK_DAYS_PER_WEEK = _int("WORK_DAYS_PER_WEEK", 6)` in `config.py` with environment variable override support.
+  2. Updated `weekly_report.py` to use `f"📅 Days active : {days_worked}/{config.WORK_DAYS_PER_WEEK}"`.
+  3. Updated `.env.example` to document `WORK_DAYS_PER_WEEK=6`.
+- **Files Affected:** `config.py`, `weekly_report.py`, `.env.example`, `DECISIONS.md`.

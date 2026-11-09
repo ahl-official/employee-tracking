@@ -105,6 +105,8 @@ WORK_START_HOUR = _int("WORK_START_HOUR", 9)
 WORK_END_HOUR = _int("WORK_END_HOUR", 19)
 # Daily seated + idle always partition this many seconds (default 9 hours)
 WORKDAY_SECONDS = _int("WORKDAY_SECONDS", 9 * 3600)
+# Standard working days per week for weekly reporting baseline (default 6: Mon–Sat)
+WORK_DAYS_PER_WEEK = _int("WORK_DAYS_PER_WEEK", 6)
 
 # Weekly report scheduler
 # Day of week to send the report: 0=Monday … 6=Sunday (default 6 = Sunday)

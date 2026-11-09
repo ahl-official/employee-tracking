@@ -149,7 +149,7 @@ def build_weekly_report(db: SessionLocal | None = None) -> str:
             dept_str = f" | {emp.department}" if emp.department else ""
 
             lines.append(f"👤 *{emp.name}*{dept_str}")
-            lines.append(f"   📅 Days active : {days_worked}/5")
+            lines.append(f"   📅 Days active : {days_worked}/{config.WORK_DAYS_PER_WEEK}")
             lines.append(f"   🕐 Screen time : {analytics.fmt_hours(total_clocked)}")
             lines.append(f"   🟢 Seated      : {analytics.fmt_hours(total_seated)}")
             lines.append(f"   💤 Idle/Away   : {analytics.fmt_hours(total_idle)}")
