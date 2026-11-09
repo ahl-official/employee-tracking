@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, create_engine, event
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 import config
@@ -31,6 +31,10 @@ class User(Base):
 
 class Heartbeat(Base):
     __tablename__ = "heartbeats"
+    __table_args__ = (
+        Index("idx_heartbeat_user_created", "user_id", "created_at"),
+        Index("idx_heartbeat_created", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -47,6 +51,9 @@ class Heartbeat(Base):
 
 class Alert(Base):
     __tablename__ = "alerts"
+    __table_args__ = (
+        Index("idx_alerts_user_seen", "user_id", "seen"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -59,6 +66,9 @@ class Alert(Base):
 
 class WorkSession(Base):
     __tablename__ = "work_sessions"
+    __table_args__ = (
+        Index("idx_work_sessions_user_clock_in", "user_id", "clock_in"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -70,6 +80,9 @@ class WorkSession(Base):
 
 class TaskRequest(Base):
     __tablename__ = "task_requests"
+    __table_args__ = (
+        Index("idx_task_requests_user_status", "user_id", "status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))

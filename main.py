@@ -41,11 +41,23 @@ from models import Alert, Base, Heartbeat, SessionLocal, User, WorkSession, Task
 PREVIEW_FRAMES: dict[int, bytes] = {}
 PREVIEW_META: dict[int, dict] = {}
 _LAST_FACE_SEEN: dict[int, float] = {}
+_USER_SUMMARY_CACHE: dict[int, tuple[float, dict]] = {}
 _DETECT_NET = None
 _DETECT_FACE = None
 _cleanup_stop = threading.Event()
 AGENT_FG_DIR = Path(__file__).resolve().parent / "face_models"
 AGENT_DIR = Path(__file__).resolve().parent / "agent"
+
+
+def get_user_summary(db: Session, user_id: int, force_fresh: bool = False) -> dict:
+    now_ts = time.time()
+    cached = _USER_SUMMARY_CACHE.get(user_id)
+    if not force_fresh and cached is not None and (now_ts - cached[0] < 8.0):
+        return cached[1]
+    start, end = analytics.day_range()
+    summary = analytics.summarize(db, user_id, start, end)
+    _USER_SUMMARY_CACHE[user_id] = (now_ts, summary)
+    return summary
 
 
 def _agent_fg_path(user_id: int) -> Path:
@@ -1112,8 +1124,7 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
                 )
             )
         db.flush()
-        start, end = analytics.day_range()
-        summary = analytics.summarize(db, user.id, start, end)
+        summary = get_user_summary(db, user.id, force_fresh=True)
         maybe_alert(db, user, False, True, summary["break_left_seconds"])
         db.commit()
         return {
@@ -1140,8 +1151,13 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
     face_seen_now = False
 
     if face_id.has_enrollment(user.id):
+        face_boxes = [
+            (int(m["x"]), int(m["y"]), int(m["w"]), int(m["h"]))
+            for m in marks
+            if m.get("label") in ("Employee", "Face")
+        ]
         matched, score, reason, matched_box = face_id.verify(
-            user.id, frame, yunet, require_desk_zone=True
+            user.id, frame, yunet, require_desk_zone=True, boxes=face_boxes
         )
         identity = {"required": True, "matched": matched, "score": round(score, 3), "reason": reason}
         if matched and reason == "matched":
@@ -1234,8 +1250,8 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
             )
         )
     db.flush()
-    start, end = analytics.day_range()
-    summary = analytics.summarize(db, user.id, start, end)
+    # Refresh summary; absent frames check break budget immediately for alerts
+    summary = get_user_summary(db, user.id, force_fresh=not bool(present))
     maybe_alert(db, user, bool(present), True, summary["break_left_seconds"])
     db.commit()
     return {
@@ -2137,7 +2153,7 @@ def spa_assets(file_path: str):
     target = (root / file_path).resolve()
     if not str(target).startswith(str(root)) or not target.is_file():
         return JSONResponse({"ok": False}, status_code=404)
-    return FileResponse(target)
+    return FileResponse(target, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
 @app.post("/api/hr/weekly-report/send")

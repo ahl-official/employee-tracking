@@ -19,6 +19,8 @@ MAX_ENROLL_SAMPLES = 10
 
 # Per-user: last successful face match (unix time)
 _last_match_at: dict[int, float] = {}
+# In-memory cache for enrolled embeddings to eliminate per-frame disk I/O and zip decompression
+_EMBEDS_CACHE: dict[int, np.ndarray] = {}
 
 
 def _ensure_dir() -> None:
@@ -55,6 +57,7 @@ def enrollment_count(user_id: int) -> int:
 
 
 def clear_enrollment(user_id: int) -> None:
+    _EMBEDS_CACHE.pop(user_id, None)
     path = model_path(user_id)
     if path.is_file():
         path.unlink()
@@ -151,6 +154,7 @@ def enroll_from_frame(user_id: int, frame, yunet) -> dict:
 
     arr = np.stack(embeds, axis=0)
     np.savez_compressed(path, embeds=arr, count=np.array(len(embeds)))
+    _EMBEDS_CACHE[user_id] = arr
     count = len(embeds)
     ready = count >= MIN_ENROLL_SAMPLES
     return {
@@ -164,7 +168,13 @@ def enroll_from_frame(user_id: int, frame, yunet) -> dict:
     }
 
 
-def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[bool, float, str, tuple[int, int, int, int] | None]:
+def verify(
+    user_id: int,
+    frame,
+    yunet,
+    require_desk_zone: bool = True,
+    boxes: list[tuple[int, int, int, int]] | None = None,
+) -> tuple[bool, float, str, tuple[int, int, int, int] | None]:
     """
     Return (matched, score, reason, box_xywh).
     matched=True only when this user's enrolled face is seen (and optionally in desk zone),
@@ -173,9 +183,17 @@ def verify(user_id: int, frame, yunet, require_desk_zone: bool = True) -> tuple[
     if not has_enrollment(user_id):
         return False, 0.0, "not_enrolled", None
 
-    data = np.load(model_path(user_id))
-    embeds = data["embeds"]
-    boxes = detector.detect_faces(yunet, frame)
+    embeds = _EMBEDS_CACHE.get(user_id)
+    if embeds is None:
+        try:
+            data = np.load(model_path(user_id))
+            embeds = data["embeds"]
+            _EMBEDS_CACHE[user_id] = embeds
+        except Exception:
+            return False, 0.0, "model_read_error", None
+
+    if boxes is None:
+        boxes = detector.detect_faces(yunet, frame)
     hold = float(getattr(config, "IDENTITY_HOLD_SECONDS", 900))
     now = time.time()
 

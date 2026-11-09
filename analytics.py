@@ -28,19 +28,45 @@ def is_today(day=None) -> bool:
     return parse_day(day) == local_now().date()
 
 
-def activity_days(db, user_id=None, limit=60) -> list[str]:
-    from models import Heartbeat
+_ACTIVITY_DAYS_CACHE: dict[str, float | list[str]] = {"at": 0.0, "days": []}
 
-    q = db.query(Heartbeat.created_at)
-    if user_id is not None:
-        q = q.filter(Heartbeat.user_id == user_id)
+
+def activity_days(db, user_id=None, limit=60) -> list[str]:
+    global _ACTIVITY_DAYS_CACHE
+    import time
+    now_ts = time.time()
+    cached_days = _ACTIVITY_DAYS_CACHE.get("days") or []
+    cached_at = float(_ACTIVITY_DAYS_CACHE.get("at") or 0.0)
+    if user_id is None and (now_ts - cached_at < 60.0) and cached_days:
+        return cached_days[:limit]
+
+    from models import Heartbeat, WorkSession
+    cut = utc_now() - timedelta(days=limit + 15)
     dates = set()
-    for (ts,) in q.all():
+
+    # Fast scan: WorkSession table has ~1-2 rows per user per day
+    sq = db.query(WorkSession.clock_in).filter(WorkSession.clock_in >= cut)
+    if user_id is not None:
+        sq = sq.filter(WorkSession.user_id == user_id)
+    for (ts,) in sq.all():
         dt = as_dt(ts)
         if dt:
             dates.add(dt.astimezone(config.TIMEZONE).date())
+
+    # Supplement with recent heartbeats within cut (uses index!)
+    hq = db.query(Heartbeat.created_at).filter(Heartbeat.created_at >= cut)
+    if user_id is not None:
+        hq = hq.filter(Heartbeat.user_id == user_id)
+    for (ts,) in hq.all():
+        dt = as_dt(ts)
+        if dt:
+            dates.add(dt.astimezone(config.TIMEZONE).date())
+
     dates.add(local_now().date())
-    return [d.isoformat() for d in sorted(dates, reverse=True)[:limit]]
+    res = [d.isoformat() for d in sorted(dates, reverse=True)[:limit]]
+    if user_id is None:
+        _ACTIVITY_DAYS_CACHE = {"at": now_ts, "days": res}
+    return res
 
 
 def inside_work_hours(moment=None) -> bool:

@@ -60,9 +60,34 @@ def _ensure_agent_password_column() -> None:
         pass
 
 
+def _ensure_indexes() -> None:
+    """Create essential performance indexes on SQLite if they do not exist."""
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_heartbeat_user_created ON heartbeats (user_id, created_at);"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_heartbeat_created ON heartbeats (created_at);"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_work_sessions_user_clock_in ON work_sessions (user_id, clock_in);"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_alerts_user_seen ON alerts (user_id, seen);"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_task_requests_user_status ON task_requests (user_id, status);"
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
 def init_db() -> None:
     Base.metadata.create_all(engine)
     _ensure_agent_password_column()
+    _ensure_indexes()
     db = Session(engine)
     try:
         purge_old_data(db)

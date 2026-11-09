@@ -267,3 +267,21 @@
   1. Configured `connect_args={"check_same_thread": False, "timeout": 30}` in `models.py` and set `PRAGMA busy_timeout=30000;`.
   2. Replaced repetitive `Base.metadata.create_all` calls in `main.py` with an idempotent `ensure_tables()` function that runs at most once per process lifetime, eliminating DDL lock contention.
 - **Files Affected:** `models.py`, `main.py`, `DECISIONS.md`.
+
+---
+
+## Decision 21: System-Wide Performance Optimizations (Indexes, In-Memory Caching & AI Pass Deduping)
+- **Date:** 2026-11-09
+- **Problem:**
+  1. **Missing Database Indexes:** `heartbeats` and `work_sessions` had no indexes. As tens of thousands of rows accumulated, every single heartbeat query in `analytics.summarize` triggered a full sequential table scan on SQLite, locking the database and causing multi-second delays.
+  2. **Memory Overload in `activity_days`:** `db.query(Heartbeat.created_at).all()` loaded every single heartbeat timestamp across company history into Python memory on every 5-second `/api/report` poll, pushing memory near the 1GB Docker limit.
+  3. **Redundant Recalculations:** `api_me_track` recalculated the entire day's summary for each employee on every 2.5s video frame even when the employee was normally seated.
+  4. **Dual Face Detection Inference & Disk I/O:** `detect_faces` ran twice on each frame (in `detector.annotate` and `face_id.verify`), and face embeddings were re-read and decompressed from disk on every frame.
+  5. **Uncached Frontend Bundles:** Web assets had no `Cache-Control` headers, forcing full bundle re-downloads.
+- **Decision:**
+  1. **SQLite Database Indexes:** Added indexes on `heartbeats(user_id, created_at)`, `heartbeats(created_at)`, and `work_sessions(user_id, clock_in)` with automatic `_ensure_indexes()` on startup.
+  2. **Optimized Activity Days with 60s Cache:** Refactored `activity_days` to scan `work_sessions` (which has only 1-2 rows per user/day) over the last 90 days and cached the result for 60 seconds.
+  3. **Summary Caching in Camera Pipeline:** Introduced an 8-second in-memory summary cache (`_USER_SUMMARY_CACHE`) in `main.py` for normal seated frames, only forcing recalculation on absent frames for alert evaluation.
+  4. **In-Memory Embeddings & Single-Pass Detection:** Added `_EMBEDS_CACHE` in `face_id.py` and passed pre-detected face boxes from `detector.annotate` into `face_id.verify`, cutting YuNet inference by 50%.
+  5. **Static Asset Caching:** Added `public, max-age=31536000, immutable` headers for Vite hashed static assets in `/assets/`.
+- **Files Affected:** `models.py`, `database.py`, `analytics.py`, `face_id.py`, `main.py`, `DECISIONS.md`.
