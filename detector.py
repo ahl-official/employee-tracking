@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import threading
 import time
 import urllib.request
 from datetime import datetime
@@ -28,6 +30,8 @@ PERSON_CLASS = 0
 FACE_SCORE = 0.45
 HOLD_SECONDS = float(getattr(config, "IDENTITY_HOLD_SECONDS", 900))
 _hold_until = 0.0
+_INFERENCE_LOCK = threading.Lock()
+logger = logging.getLogger("uvicorn.error")
 
 
 def ensure_model() -> None:
@@ -109,15 +113,20 @@ def _yolo_rows(raw) -> np.ndarray:
 
 
 def detect_faces(yunet, frame) -> list:
-    if yunet is None:
+    if yunet is None or frame is None or frame.size == 0:
         return []
     height, width = frame.shape[:2]
     small = cv2.resize(frame, (320, 320))
     try:
-        yunet.setInputSize((320, 320))
-    except TypeError:
-        yunet.setInputSize(320, 320)
-    result = yunet.detect(small)
+        with _INFERENCE_LOCK:
+            try:
+                yunet.setInputSize((320, 320))
+            except TypeError:
+                yunet.setInputSize(320, 320)
+            result = yunet.detect(small)
+    except Exception as exc:
+        logger.warning(f"[Detector] Face detection inference skipped due to error: {exc}")
+        return []
     faces = result[1] if isinstance(result, tuple) and len(result) > 1 else result
     if faces is None:
         return []
@@ -133,10 +142,17 @@ def detect_faces(yunet, frame) -> list:
 
 
 def detect_people(frame, net) -> tuple[list, list]:
+    if net is None or frame is None or frame.size == 0:
+        return [], []
     height, width = frame.shape[:2]
-    blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (INPUT, INPUT), swapRB=True, crop=False)
-    net.setInput(blob)
-    rows = _yolo_rows(net.forward())
+    try:
+        blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (INPUT, INPUT), swapRB=True, crop=False)
+        with _INFERENCE_LOCK:
+            net.setInput(blob)
+            rows = _yolo_rows(net.forward())
+    except Exception as exc:
+        logger.warning(f"[Detector] Person detection inference skipped due to error: {exc}")
+        return [], []
     boxes, scores = [], []
     scale_x, scale_y = width / INPUT, height / INPUT
     for row in rows:
