@@ -34,6 +34,7 @@ import config
 import detector
 import face_id
 import waha
+import weekly_report
 from database import init_db, purge_old_data, utc_now
 from models import Alert, Base, Heartbeat, SessionLocal, User, WorkSession, TaskRequest, engine
 
@@ -95,8 +96,10 @@ async def lifespan(_: FastAPI):
     _cleanup_stop.clear()
     t = threading.Thread(target=_cleanup_loop, daemon=True)
     t.start()
+    weekly_report.start_weekly_report_scheduler()
     yield
     _cleanup_stop.set()
+    weekly_report.stop_weekly_report_scheduler()
 
 
 app = FastAPI(
@@ -2089,6 +2092,49 @@ def spa_assets(file_path: str):
     if not str(target).startswith(str(root)) or not target.is_file():
         return JSONResponse({"ok": False}, status_code=404)
     return FileResponse(target)
+
+
+@app.post("/api/hr/weekly-report/send")
+async def hr_send_weekly_report_now(request: Request, db: Session = Depends(get_db)):
+    """
+    HR-only: Manually trigger the weekly WhatsApp report right now.
+    Useful for testing or on-demand sends without waiting for Sunday.
+    """
+    user = require(request, db, "hr")
+    if not user:
+        return JSONResponse({"ok": False, "error": "HR access required"}, status_code=403)
+
+    if not waha.is_waha_configured():
+        return JSONResponse(
+            {"ok": False, "error": "WAHA not configured. Set WAHA_API_URL and LEAD_WHATSAPP_PHONE in .env."},
+            status_code=503,
+        )
+
+    # Fire in background so the HTTP request returns immediately
+    threading.Thread(target=weekly_report.send_weekly_report, daemon=True).start()
+    phones = waha.get_lead_phone_numbers()
+    return JSONResponse({
+        "ok": True,
+        "message": f"Weekly report dispatch started — sending to {len(phones)} HR phone(s).",
+        "phones": phones,
+    })
+
+
+@app.get("/api/hr/weekly-report/preview")
+async def hr_preview_weekly_report(request: Request, db: Session = Depends(get_db)):
+    """
+    HR-only: Preview the weekly report message text without sending it.
+    Returns the raw WhatsApp message that would be sent.
+    """
+    user = require(request, db, "hr")
+    if not user:
+        return JSONResponse({"ok": False, "error": "HR access required"}, status_code=403)
+
+    try:
+        message = weekly_report.build_weekly_report(db)
+        return JSONResponse({"ok": True, "message": message})
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
 
 
 @app.get("/{full_path:path}")

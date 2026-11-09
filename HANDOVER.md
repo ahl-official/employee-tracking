@@ -90,6 +90,15 @@ Below is the complete chronological log of all iterations, problems encountered,
     - $\text{Break Left} = \max(0, 3600 - \text{Unapproved Away})$
     - $\text{Idle Time} = \max(0, \text{Unapproved Away} - 3600)$
 
+### Phase 10: Automatic Weekly WhatsApp Report (Decision 16)
+- **Problem:** Management and HR needed an automated weekly overview for every employee sent automatically every Sunday without requiring HR to manually pull reports. The report needed to summarize screen time, seated vs. idle times, and main applications used.
+- **Solution:**
+  - Added `weekly_report.py` to aggregate 7-day attendance and application tracking metrics across all active employees.
+  - Formatted WhatsApp message with screen time, days active, seated, idle/away, active apps, presence % with ASCII progress bar, and top 3 apps used with exact durations.
+  - Background scheduler thread wakes up every minute and automatically dispatches to all numbers in `LEAD_WHATSAPP_PHONE` every Sunday at 09:00 AM IST (configurable via `WEEKLY_REPORT_DAY`, `WEEKLY_REPORT_HOUR`, `WEEKLY_REPORT_MINUTE`).
+  - Added HR API endpoints `GET /api/hr/weekly-report/preview` and `POST /api/hr/weekly-report/send`.
+  - Added `📱 Weekly Report` interactive modal to the HR Daily Report page (`Reports.jsx`) with live preview, copy-to-clipboard, and manual dispatch button.
+
 ---
 
 ## 3. Core Business Rules Cheat Sheet
@@ -111,6 +120,7 @@ Below is the complete chronological log of all iterations, problems encountered,
 ```
 ├── main.py                     # FastAPI routes, WebSocket / HTTP APIs, Webhooks, Auth, .bat generator
 ├── analytics.py                # Shift aggregation, Seated/Idle/Break/Apps partitioning logic
+├── weekly_report.py            # Automated 7-day weekly WhatsApp report builder & scheduler
 ├── config.py                   # Central settings, env parsing, default timeouts and thresholds
 ├── models.py                   # SQLAlchemy ORM models (User, Heartbeat, WorkSession, TaskRequest, Alert)
 ├── waha.py                     # WAHA WhatsApp REST client, Poll generation, Multi-HR dispatch

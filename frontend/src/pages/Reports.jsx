@@ -8,6 +8,44 @@ export default function Reports() {
   const [data, setData] = useState(null);
   const [selectedEmployeeApps, setSelectedEmployeeApps] = useState(null);
 
+  // Weekly WhatsApp report modal state
+  const [showWeeklyModal, setShowWeeklyModal] = useState(false);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [weeklyPreview, setWeeklyPreview] = useState("");
+  const [weeklySendStatus, setWeeklySendStatus] = useState(null);
+  const [isSending, setIsSending] = useState(false);
+
+  const openWeeklyModal = async () => {
+    setShowWeeklyModal(true);
+    setWeeklyLoading(true);
+    setWeeklySendStatus(null);
+    const { ok, data } = await api("/api/hr/weekly-report/preview");
+    if (ok && data?.message) {
+      setWeeklyPreview(data.message);
+    } else {
+      setWeeklyPreview(data?.error || "Could not generate preview.");
+    }
+    setWeeklyLoading(false);
+  };
+
+  const sendWeeklyNow = async () => {
+    setIsSending(true);
+    setWeeklySendStatus(null);
+    const { ok, data } = await api("/api/hr/weekly-report/send", { method: "POST" });
+    if (ok) {
+      setWeeklySendStatus({
+        type: "success",
+        text: data?.message || "Report dispatch initiated successfully!",
+      });
+    } else {
+      setWeeklySendStatus({
+        type: "error",
+        text: data?.error || "Failed to trigger report send.",
+      });
+    }
+    setIsSending(false);
+  };
+
   const refresh = useCallback(async () => {
     const { ok, data: next } = await api(`/api/report?day=${encodeURIComponent(day)}`);
     if (ok) setData(next);
@@ -42,6 +80,15 @@ export default function Reports() {
           </p>
         </div>
         <div className="actions">
+          <button
+            type="button"
+            className="btn"
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+            onClick={openWeeklyModal}
+            title="Preview or manually trigger the weekly WhatsApp report"
+          >
+            📱 Weekly Report
+          </button>
           <label className="day-pick">
             Day{" "}
             <input type="date" value={day} max={todayIST()} onChange={(e) => setDay(e.target.value)} />
@@ -219,6 +266,149 @@ export default function Reports() {
                 type="button"
                 className="button secondary"
                 onClick={() => setSelectedEmployeeApps(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showWeeklyModal && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setShowWeeklyModal(false)}
+          role="presentation"
+        >
+          <div
+            className="card modal-card"
+            style={{ maxWidth: "560px", width: "95%" }}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="modal-head">
+              <div>
+                <h2 style={{ margin: 0, fontSize: "1.15rem" }}>Weekly WhatsApp Report</h2>
+                <div className="muted" style={{ fontSize: "0.82rem", marginTop: "4px" }}>
+                  ⏰ <strong>Auto-Schedule:</strong> Every Sunday at 09:00 AM IST
+                </div>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setShowWeeklyModal(false)}
+                aria-label="Close modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div
+              style={{
+                background: "var(--surface-hover, rgba(255, 255, 255, 0.04))",
+                border: "1px solid var(--border)",
+                borderRadius: "8px",
+                padding: "10px 14px",
+                margin: "12px 0",
+                fontSize: "0.83rem",
+                lineHeight: "1.4",
+              }}
+            >
+              <span>
+                Dispatched automatically to all HR & Lead WhatsApp numbers configured in{" "}
+                <code>LEAD_WHATSAPP_PHONE</code> on every Sunday.
+              </span>
+            </div>
+
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <span style={{ fontSize: "0.84rem", fontWeight: 600 }}>WhatsApp Message Preview:</span>
+                <button
+                  type="button"
+                  className="button secondary"
+                  style={{ fontSize: "0.75rem", padding: "2px 8px" }}
+                  onClick={() => {
+                    navigator.clipboard.writeText(weeklyPreview);
+                    alert("Report copied to clipboard!");
+                  }}
+                  disabled={!weeklyPreview || weeklyLoading}
+                >
+                  Copy Text
+                </button>
+              </div>
+
+              {weeklyLoading ? (
+                <div style={{ padding: "2rem", textAlign: "center", color: "var(--muted)" }}>
+                  Aggregating 7-day attendance & app metrics…
+                </div>
+              ) : (
+                <pre
+                  style={{
+                    background: "rgba(0, 0, 0, 0.35)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "8px",
+                    padding: "12px",
+                    fontSize: "0.82rem",
+                    lineHeight: "1.45",
+                    whiteSpace: "pre-wrap",
+                    maxHeight: "320px",
+                    overflowY: "auto",
+                    fontFamily: "ui-monospace, monospace",
+                  }}
+                >
+                  {weeklyPreview}
+                </pre>
+              )}
+            </div>
+
+            {weeklySendStatus && (
+              <div
+                style={{
+                  marginTop: "12px",
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  fontSize: "0.83rem",
+                  background:
+                    weeklySendStatus.type === "success"
+                      ? "rgba(34, 197, 94, 0.15)"
+                      : "rgba(239, 68, 68, 0.15)",
+                  color:
+                    weeklySendStatus.type === "success"
+                      ? "var(--success, #22c55e)"
+                      : "var(--danger, #ef4444)",
+                  border: `1px solid ${
+                    weeklySendStatus.type === "success"
+                      ? "rgba(34, 197, 94, 0.3)"
+                      : "rgba(239, 68, 68, 0.3)"
+                  }`,
+                }}
+              >
+                {weeklySendStatus.text}
+              </div>
+            )}
+
+            <div
+              className="modal-actions"
+              style={{
+                marginTop: "1rem",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ fontSize: "0.85rem" }}
+                onClick={sendWeeklyNow}
+                disabled={isSending || weeklyLoading}
+              >
+                {isSending ? "Sending…" : "📤 Send to WhatsApp Now"}
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setShowWeeklyModal(false)}
               >
                 Close
               </button>

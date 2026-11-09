@@ -106,6 +106,14 @@ WORK_END_HOUR = _int("WORK_END_HOUR", 19)
 # Daily seated + idle always partition this many seconds (default 9 hours)
 WORKDAY_SECONDS = _int("WORKDAY_SECONDS", 9 * 3600)
 
+# Weekly report scheduler
+# Day of week to send the report: 0=Monday … 6=Sunday (default 6 = Sunday)
+WEEKLY_REPORT_DAY = _int("WEEKLY_REPORT_DAY", 6)
+# Hour (24h, in TIMEZONE) to send the report (default 9 = 09:00)
+WEEKLY_REPORT_HOUR = _int("WEEKLY_REPORT_HOUR", 9)
+# Minute to send the report (default 0 = :00)
+WEEKLY_REPORT_MINUTE = _int("WEEKLY_REPORT_MINUTE", 0)
+
 HOST = os.getenv("HOST", "127.0.0.1" if not PRODUCTION else "0.0.0.0")
 PORT = _int("PORT", 8000)
 RELOAD = _bool("RELOAD", not PRODUCTION)

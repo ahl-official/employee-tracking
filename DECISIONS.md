@@ -200,3 +200,17 @@
   4. **Strict Break vs. Idle Partitioning:** Updated `analytics.py` so that unapproved away time first consumes the 1-hour break allowance (`break_used = min(away, 3600)`). Any excess away time beyond the 1-hour allowance is placed into `idle_s`.
   5. **UI Consistency:** Updated default placeholder in `Desk.jsx` to `1h` break left and refined tooltips across `Reports.jsx`, `Employee.jsx`, and `Desk.jsx`.
 - **Files Affected:** `config.py`, `waha.py`, `main.py`, `detector.py`, `face_id.py`, `analytics.py`, `frontend/src/pages/Desk.jsx`, `frontend/src/pages/Reports.jsx`, `frontend/src/pages/Employee.jsx`, `DECISIONS.md`.
+
+---
+
+## Decision 16: Automatic Weekly WhatsApp Report for HR with Screen Time and Top Applications
+- **Date:** 2026-11-09
+- **Problem:**
+  1. HR and leadership needed an automated summary of each employee's screen time, seated/idle breakdown, and main applications used, sent automatically to HR every Sunday.
+  2. Previously, reports were only visible inside the web dashboard on a day-by-day basis.
+- **Decision:**
+  1. **Weekly Metric Aggregation:** Created `weekly_report.py` with `build_weekly_report()`, which iterates over the past 7 calendar days for all active employees, aggregating screen time, seated time, idle/away time, active application time, presence percentage, and top 3 apps used with their exact durations.
+  2. **WhatsApp Formatting:** Styled message with clean Markdown and an ASCII progress bar (`████░░░░░░ 39%`).
+  3. **Automated Scheduler:** Built a background scheduler thread that runs during the application lifespan and checks every minute. Automatically dispatches the weekly summary to all HR phone numbers in `LEAD_WHATSAPP_PHONE` every Sunday at 09:00 AM IST (configurable via `WEEKLY_REPORT_DAY`, `WEEKLY_REPORT_HOUR`, `WEEKLY_REPORT_MINUTE`).
+  4. **HR Dashboard UI & Manual Trigger:** Added endpoints `GET /api/hr/weekly-report/preview` and `POST /api/hr/weekly-report/send`. Added a `📱 Weekly Report` interactive modal to `Reports.jsx` allowing HR to preview the report in real-time, copy the text, or trigger a manual dispatch.
+- **Files Affected:** `weekly_report.py`, `config.py`, `main.py`, `.env.example`, `.gitignore`, `frontend/src/pages/Reports.jsx`, `HANDOVER.md`, `DECISIONS.md`.
