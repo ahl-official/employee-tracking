@@ -217,13 +217,12 @@
 
 ---
 
-## Decision 17: Guaranteed Workstation Auto-Connector Startup Folder Persistence & HR 1-Click Download per Employee
+## Decision 17: Guaranteed Workstation Auto-Connector Startup Folder Persistence
 - **Date:** 2026-11-09
 - **Problem:**
   1. Employees who set up the workstation `.bat` on Saturday saw tracking stop on Monday after rebooting because the Windows Registry `HKCU\...\Run` command used bare `pythonw.exe` without an absolute path, which failed on Windows startup.
   2. When employees only had their browser open, Chrome's security sandbox prevented tracking external apps, resulting in only `DeskTrack` appearing in the HR report.
-  3. HR needed a way to download the `.bat` installer for any employee directly from the HR dashboard to set up workstation PCs without logging in as each user.
 - **Decision:**
   1. **Dual Startup Persistence:** In the `.bat` installer, resolved the full absolute path to `pythonw.exe` (or `python.exe`) and installed a silent VBScript launcher into the **Windows Startup folder** (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DeskTrackAgent.vbs`) alongside the registry key, guaranteeing the agent starts invisibly every time Windows boots.
-  2. **HR 1-Click Connect Download:** Added `/api/hr/download-launcher/{user_id}` and placed a `Connect .bat` download button in `People.jsx` next to each employee. HR can download all employee `.bat` files directly onto a USB drive or run them via AnyDesk.
-- **Files Affected:** `main.py`, `agent/desktrack_agent.py`, `frontend/src/pages/People.jsx`, `DECISIONS.md`.
+  2. **Employee Self-Service Download:** Kept connector `.bat` download exclusive to the employee portal.
+- **Files Affected:** `main.py`, `agent/desktrack_agent.py`, `DECISIONS.md`.

@@ -1018,22 +1018,6 @@ def generate_one_click_launcher(request: Request, db: Session = Depends(get_db))
     )
 
 
-@app.get("/api/hr/download-launcher/{user_id}", response_class=PlainTextResponse)
-def hr_download_employee_launcher(user_id: int, request: Request, db: Session = Depends(get_db)):
-    """Allows HR/admin to download the 1-click PC connector for ANY employee to set up their PC."""
-    hr_user = require(request, db, "hr")
-    if not hr_user:
-        return PlainTextResponse("Unauthorized", status_code=401)
-    target_user = db.get(User, user_id)
-    if not target_user:
-        return PlainTextResponse("Employee not found", status_code=404)
-    bat_script = _build_connector_bat(target_user, request, db)
-    return PlainTextResponse(
-        content=bat_script,
-        headers={"Content-Disposition": f"attachment; filename=Connect-{target_user.username}.bat"},
-    )
-
-
 
 def _resolve_app_fields(user_id: int, payload: dict) -> tuple[str, str, str]:
     fg = load_agent_foreground(user_id, max_age=90.0)

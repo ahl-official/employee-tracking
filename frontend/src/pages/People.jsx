@@ -163,15 +163,6 @@ export default function People() {
                   <td>
                     {p.role === "employee" ? (
                       <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        <a
-                          className="btn-action"
-                          href={`/api/hr/download-launcher/${p.id}`}
-                          download={`Connect-${p.username}.bat`}
-                          title={`Download 1-click workstation installer .bat for ${p.name}`}
-                          style={{ textDecoration: "none" }}
-                        >
-                          Connect .bat
-                        </a>
                         <button type="button" className="btn-action" onClick={() => openReset(p)}>
                           Reset login
                         </button>
