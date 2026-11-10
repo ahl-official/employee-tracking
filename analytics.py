@@ -1,9 +1,14 @@
 """Seated / idle / app-time summaries from heartbeats."""
 
+import time
 from datetime import datetime, timedelta, timezone
 
 import config
 from models import Heartbeat, WorkSession, TaskRequest
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def local_now():
@@ -33,14 +38,12 @@ _ACTIVITY_DAYS_CACHE: dict[str, tuple[float, list[str]]] = {}
 
 def activity_days(db, user_id=None, limit=60) -> list[str]:
     global _ACTIVITY_DAYS_CACHE
-    import time
     now_ts = time.time()
     cache_key = str(user_id) if user_id is not None else "all"
     cached = _ACTIVITY_DAYS_CACHE.get(cache_key)
     if cached and (now_ts - cached[0] < 60.0):
         return cached[1][:limit]
 
-    from models import WorkSession
     cut = utc_now() - timedelta(days=limit + 15)
     dates = set()
 
