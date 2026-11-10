@@ -42,6 +42,9 @@ PREVIEW_FRAMES: dict[int, bytes] = {}
 PREVIEW_META: dict[int, dict] = {}
 _LAST_FACE_SEEN: dict[int, float] = {}
 _USER_SUMMARY_CACHE: dict[int, tuple[float, dict]] = {}
+_PAST_DAY_SUMMARY_CACHE: dict[tuple[int, str], tuple[float, dict]] = {}
+_HR_USER_IDS: set[int] = set()
+_LAST_OVERNIGHT_CLOSE: float = 0.0
 _DETECT_NET = None
 _DETECT_FACE = None
 _cleanup_stop = threading.Event()
@@ -49,15 +52,35 @@ AGENT_FG_DIR = Path(__file__).resolve().parent / "face_models"
 AGENT_DIR = Path(__file__).resolve().parent / "agent"
 
 
-def get_user_summary(db: Session, user_id: int, force_fresh: bool = False) -> dict:
+def _refresh_hr_ids() -> None:
+    global _HR_USER_IDS
+    try:
+        with SessionLocal() as db:
+            _HR_USER_IDS = {u.id for u in db.query(User.id).filter(User.role == "hr").all()}
+    except Exception:
+        pass
+
+
+def get_user_summary(db: Session, user_id: int, force_fresh: bool = False, day=None) -> dict:
+    day = analytics.parse_day(day)
     now_ts = time.time()
-    cached = _USER_SUMMARY_CACHE.get(user_id)
-    if not force_fresh and cached is not None and (now_ts - cached[0] < 8.0):
-        return cached[1]
-    start, end = analytics.day_range()
-    summary = analytics.summarize(db, user_id, start, end)
-    _USER_SUMMARY_CACHE[user_id] = (now_ts, summary)
-    return summary
+    if analytics.is_today(day):
+        cached = _USER_SUMMARY_CACHE.get(user_id)
+        if not force_fresh and cached is not None and (now_ts - cached[0] < 8.0):
+            return cached[1]
+        start, end = analytics.day_range(day)
+        summary = analytics.summarize(db, user_id, start, end)
+        _USER_SUMMARY_CACHE[user_id] = (now_ts, summary)
+        return summary
+    else:
+        cache_key = (user_id, day.isoformat())
+        cached = _PAST_DAY_SUMMARY_CACHE.get(cache_key)
+        if not force_fresh and cached is not None and (now_ts - cached[0] < 3600.0):
+            return cached[1]
+        start, end = analytics.day_range(day)
+        summary = analytics.summarize(db, user_id, start, end)
+        _PAST_DAY_SUMMARY_CACHE[cache_key] = (now_ts, summary)
+        return summary
 
 
 def _agent_fg_path(user_id: int) -> Path:
@@ -74,7 +97,7 @@ def save_agent_foreground(user_id: int, app: str, title: str) -> None:
         pass
 
 
-def load_agent_foreground(user_id: int, max_age: float = 90.0) -> dict:
+def load_agent_foreground(user_id: int, max_age: float = 180.0) -> dict:
     path = _agent_fg_path(user_id)
     if not path.is_file():
         return {}
@@ -105,6 +128,7 @@ def _cleanup_loop():
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    _refresh_hr_ids()
     _cleanup_stop.clear()
     t = threading.Thread(target=_cleanup_loop, daemon=True)
     t.start()
@@ -241,8 +265,12 @@ def employee_card(db: Session, emp: User, day=None) -> dict:
     day = analytics.parse_day(day)
     start, end = analytics.day_range(day)
     viewing_today = analytics.is_today(day)
-    analytics.close_overnight_sessions(db, emp.id)
-    summary = analytics.summarize(db, emp.id, start, end)
+    global _LAST_OVERNIGHT_CLOSE
+    now_ts = time.time()
+    if now_ts - _LAST_OVERNIGHT_CLOSE > 60.0:
+        analytics.close_overnight_sessions(db)
+        _LAST_OVERNIGHT_CLOSE = now_ts
+    summary = get_user_summary(db, emp.id, day=day)
     active_task = (
         db.query(TaskRequest)
         .filter(
@@ -479,6 +507,9 @@ def api_session(request: Request, db: Session = Depends(get_db)):
     user = current_user(request, db)
     if not user:
         return JSONResponse({"ok": False}, status_code=401)
+    request.session["role"] = user.role
+    if user.role == "hr":
+        _HR_USER_IDS.add(user.id)
     return {"ok": True, "user": user_payload(user)}
 
 
@@ -496,6 +527,9 @@ def api_login(request: Request, payload: dict = Body(...), db: Session = Depends
         user.password = hash_password(password)
         db.commit()
     request.session["user_id"] = user.id
+    request.session["role"] = user.role
+    if user.role == "hr":
+        _HR_USER_IDS.add(user.id)
     return {"ok": True, "user": user_payload(user)}
 
 
@@ -529,6 +563,7 @@ def api_signup(request: Request, payload: dict = Body(...), db: Session = Depend
     db.commit()
     db.refresh(user)
     request.session["user_id"] = user.id
+    request.session["role"] = user.role
     return {"ok": True, "user": user_payload(user)}
 
 
@@ -561,6 +596,7 @@ def api_reset_credentials(request: Request, payload: dict = Body(...), db: Sessi
     db.commit()
     db.refresh(user)
     request.session["user_id"] = user.id
+    request.session["role"] = user.role
     return {"ok": True, "user": user_payload(user)}
 
 
@@ -728,13 +764,16 @@ def api_me_face_clear(request: Request, db: Session = Depends(get_db)):
 
 def record_agent_apps(db: Session, user: User, app_name: str, window_title: str) -> dict:
     """Persist foreground app from Windows agent into heartbeats + live FG file."""
-    analytics.close_overnight_sessions(db, user.id)
-    if analytics.open_session(db, user.id) is None:
-        return {"ok": False, "error": "clocked out", "status": 400}
     app_name = str(app_name or "Unknown")[:80]
     window_title = str(window_title or "")[:180]
-    locked = analytics.is_lock_screen(app_name, window_title)
+    # ALWAYS save live foreground state immediately so the website knows the agent is active!
     save_agent_foreground(user.id, app_name, window_title)
+
+    analytics.close_overnight_sessions(db, user.id)
+    if analytics.open_session(db, user.id) is None:
+        return {"ok": True, "clocked_in": False, "status": "standby"}
+
+    locked = analytics.is_lock_screen(app_name, window_title)
     last = (
         db.query(Heartbeat)
         .filter(Heartbeat.user_id == user.id)
@@ -824,6 +863,7 @@ def api_agent_login(request: Request, payload: dict = Body(...), db: Session = D
         db.commit()
 
     request.session["user_id"] = user.id
+    request.session["role"] = user.role
     return {"ok": True, "user": user_payload(user)}
 
 
@@ -1334,12 +1374,11 @@ def api_me_track(request: Request, payload: dict = Body(...), db: Session = Depe
 
 
 @app.get("/api/hr/preview/{user_id}")
-def api_hr_preview(user_id: int, request: Request, db: Session = Depends(get_db)):
-    if not require(request, db, "hr"):
-        return JSONResponse({"ok": False}, status_code=401)
-    emp = db.get(User, user_id)
-    if not emp or emp.role != "employee":
-        return Response(status_code=404)
+def api_hr_preview(user_id: int, request: Request):
+    role = request.session.get("role")
+    uid = request.session.get("user_id")
+    if role != "hr" and (not uid or uid not in _HR_USER_IDS):
+        return Response(status_code=401)
     jpeg = PREVIEW_FRAMES.get(user_id)
     if not jpeg:
         return Response(status_code=204)
@@ -1352,7 +1391,6 @@ def api_team(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False}, status_code=401)
     employees = db.query(User).filter_by(role="employee").order_by(User.name).all()
     team = [employee_card(db, emp) for emp in employees]
-    db.commit()
     counts = {"present": 0, "away": 0, "idle": 0, "inactive": 0, "break": 0, "task": 0, "offline": 0, "clocked-out": 0}
     for person in team:
         counts[person["status"]] = counts.get(person["status"], 0) + 1
@@ -1424,7 +1462,6 @@ def api_employee(user_id: int, request: Request, day: str | None = None, db: Ses
     except ValueError:
         return JSONResponse({"ok": False, "error": "bad date"}, status_code=400)
     payload = serialize_employee(db, emp, day=chosen)
-    db.commit()
     return {"ok": True, **payload}
 
 
@@ -1434,7 +1471,7 @@ def api_me(request: Request, db: Session = Depends(get_db)):
     if not user:
         return JSONResponse({"ok": False}, status_code=401)
     payload = serialize_employee(db, user)
-    db.commit()
+    return {"ok": True, **payload}
     return {"ok": True, **payload}
 
 
@@ -2154,7 +2191,6 @@ def api_report(request: Request, day: str | None = None, db: Session = Depends(g
         return JSONResponse({"ok": False, "error": "bad date"}, status_code=400)
     employees = db.query(User).filter_by(role="employee").order_by(User.name).all()
     team = [employee_card(db, emp, day=chosen) for emp in employees]
-    db.commit()
     return {
         "ok": True,
         "day": chosen.isoformat(),

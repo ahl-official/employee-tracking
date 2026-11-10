@@ -63,6 +63,14 @@ export default function Desk() {
   const cameraIdRef = useRef(cameraId);
   cameraIdRef.current = cameraId;
 
+  // Guarantee that "Connecting to desk..." / "Connecting..." button unfreezes even if network stalls
+  useEffect(() => {
+    const unfreezeTimer = setTimeout(() => {
+      setInitialLoading(false);
+    }, 3000);
+    return () => clearTimeout(unfreezeTimer);
+  }, []);
+
   // Auto-dismiss camera & face alerts after 6 seconds
   useEffect(() => {
     if (me?.clocked_in && camOn) {

@@ -72,8 +72,8 @@ export default function Live() {
       });
     }
     refresh();
-    const t1 = setInterval(refresh, 3000);
-    const t2 = setInterval(refreshFeeds, 600);
+    const t1 = setInterval(refresh, 4000);
+    const t2 = setInterval(refreshFeeds, 1500);
     return () => {
       clearInterval(t1);
       clearInterval(t2);

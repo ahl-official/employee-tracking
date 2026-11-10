@@ -6,10 +6,6 @@ import config
 from models import Heartbeat, WorkSession, TaskRequest
 
 
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 def local_now():
     return datetime.now(config.TIMEZONE)
 
@@ -32,23 +28,23 @@ def is_today(day=None) -> bool:
     return parse_day(day) == local_now().date()
 
 
-_ACTIVITY_DAYS_CACHE: dict[str, float | list[str]] = {"at": 0.0, "days": []}
+_ACTIVITY_DAYS_CACHE: dict[str, tuple[float, list[str]]] = {}
 
 
 def activity_days(db, user_id=None, limit=60) -> list[str]:
     global _ACTIVITY_DAYS_CACHE
     import time
     now_ts = time.time()
-    cached_days = _ACTIVITY_DAYS_CACHE.get("days") or []
-    cached_at = float(_ACTIVITY_DAYS_CACHE.get("at") or 0.0)
-    if user_id is None and (now_ts - cached_at < 60.0) and cached_days:
-        return cached_days[:limit]
+    cache_key = str(user_id) if user_id is not None else "all"
+    cached = _ACTIVITY_DAYS_CACHE.get(cache_key)
+    if cached and (now_ts - cached[0] < 60.0):
+        return cached[1][:limit]
 
-    from models import Heartbeat, WorkSession
+    from models import WorkSession
     cut = utc_now() - timedelta(days=limit + 15)
     dates = set()
 
-    # Fast scan: WorkSession table has ~1-2 rows per user per day
+    # Fast scan: WorkSession table has ~1-2 rows per user per day (uses index on clock_in)
     sq = db.query(WorkSession.clock_in).filter(WorkSession.clock_in >= cut)
     if user_id is not None:
         sq = sq.filter(WorkSession.user_id == user_id)
@@ -57,19 +53,9 @@ def activity_days(db, user_id=None, limit=60) -> list[str]:
         if dt:
             dates.add(dt.astimezone(config.TIMEZONE).date())
 
-    # Supplement with recent heartbeats within cut (uses index!)
-    hq = db.query(Heartbeat.created_at).filter(Heartbeat.created_at >= cut)
-    if user_id is not None:
-        hq = hq.filter(Heartbeat.user_id == user_id)
-    for (ts,) in hq.all():
-        dt = as_dt(ts)
-        if dt:
-            dates.add(dt.astimezone(config.TIMEZONE).date())
-
     dates.add(local_now().date())
     res = [d.isoformat() for d in sorted(dates, reverse=True)[:limit]]
-    if user_id is None:
-        _ACTIVITY_DAYS_CACHE = {"at": now_ts, "days": res}
+    _ACTIVITY_DAYS_CACHE[cache_key] = (now_ts, res)
     return res
 
 

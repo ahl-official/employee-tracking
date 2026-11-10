@@ -228,6 +228,24 @@ def main() -> None:
                     json={"app": app_name, "window_title": win_title},
                     timeout=15,
                 )
+                if res.status_code == 200:
+                    data = res.json() if res.content else {}
+                    if data.get("clocked_in") is False:
+                        if auto_clock_in and ensure_clocked_in(session, base):
+                            log("Re-clocked in.")
+                        else:
+                            msg = "Standby (agent active, employee not clocked in on web)"
+                            if msg != last:
+                                log(msg)
+                                last = msg
+                            time.sleep(max(3.0, interval))
+                            continue
+                    msg = f"app={app_name}"
+                    if msg != last:
+                        log(msg)
+                        last = msg
+                    time.sleep(max(2.0, interval))
+                    continue
                 if res.status_code == 400 and "clocked out" in (res.text or "").lower():
                     if auto_clock_in and ensure_clocked_in(session, base):
                         log("Re-clocked in.")

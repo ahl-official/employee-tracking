@@ -1,17 +1,31 @@
 export async function api(path, options = {}) {
-  const res = await fetch(path, {
-    credentials: "include",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  let data = null;
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    data = await res.json().catch(() => ({}));
-  } else {
-    data = await res.text().catch(() => "");
+  const controller = new AbortController();
+  const timeoutMs = options.timeout || 12000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(path, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      signal: controller.signal,
+      ...options,
+    });
+    let data = null;
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      data = await res.json().catch(() => ({}));
+    } else {
+      data = await res.text().catch(() => "");
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      data: { error: err.name === "AbortError" ? "Request timed out. Please try again." : (err.message || "Network error") },
+    };
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return { ok: res.ok, status: res.status, data };
 }
 
 export function ago(iso) {

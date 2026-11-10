@@ -314,3 +314,24 @@
   3. **Live Authentication Verification:** Added a pre-launch verification check against `/api/agent/login` using Python and `requests`, providing immediate visual feedback: `[OK] Authenticated successfully with DeskTrack server!`.
   4. **Dual Persistence & Desktop Shortcut:** In addition to the Windows Registry `Run` entry and Startup folder `.vbs` runner, created a Desktop shortcut (`DeskTrack Agent.lnk`) for manual startup and easy verification.
 - **Files Affected:** `main.py`, `DECISIONS.md`.
+
+---
+
+## Decision 24: High-Performance Database & Memory Caching, Zero-DB Live Previews & Standby Agent Resilience
+- **Date:** 2026-11-10
+- **Problem:**
+  1. **Server Saturation & "Connecting..." UI Freeze:**
+     - Live board polled `/api/team` every 3s and Reports polled `/api/report` every 5s, both running `employee_card` for all 15 employees. `employee_card` directly called `analytics.summarize` without cache, loading hundreds of thousands of `Heartbeat` rows into Python memory and doing heavy loop calculations on every poll.
+     - Live board probed all 15 camera feeds every 600ms (25 requests/sec), each opening a database session and performing two SQL queries just to check permissions for an in-memory JPEG frame.
+     - `activity_days` queried `Heartbeat.created_at` over 75 days (1M+ rows) without per-user caching on every `/api/me` call.
+     - Read-only GET endpoints (`/api/me`, `/api/team`, `/api/report`, `/api/employee`) called `db.commit()`, contending for SQLite exclusive write locks.
+     - Frontend `fetch` lacked timeouts, hanging indefinitely when backend queues formed and leaving `Desk.jsx` stuck on "Connecting to desk..." / "Connecting..." button and `App.jsx` on a blank white screen.
+  2. **Tracked Tabs Not Shown on Reload / False "Single Tab Only" Alert:**
+     - `record_agent_apps` rejected pings with `400 clocked out` BEFORE calling `save_agent_foreground` whenever an employee wasn't currently clocked in. When employees booted their PC or reloaded the web page before clocking in, the agent's pings were discarded. `agent_fg_{user_id}.json` expired after 90 seconds, flipping the UI badge back to "Single tab only" and asking employees to re-download the connector.
+- **Decision:**
+  1. **Summary Caching in `employee_card` & Throttled Overnight Check:** Refactored `employee_card` to route through `get_user_summary` (8s in-memory cache for today, 1h cache for past days) and throttled `close_overnight_sessions` to run at most once per minute, eliminating ~95% of database query volume.
+  2. **Zero-DB In-Memory Camera Previews:** Stored session role in session cookie and checked `_HR_USER_IDS` in memory for `/api/hr/preview/{id}`, eliminating 25-50 SQL queries per second. Adjusted Live board preview probe from 600ms to 1500ms.
+  3. **Fast Activity Days:** Restricted `activity_days` to `WorkSession.clock_in` only, eliminating the 75-day `Heartbeat` table scan, and cached results per-user for 60s.
+  4. **Always-Active Standby Agent State:** Moved `save_agent_foreground` to the top of `record_agent_apps` so the agent is recognized as connected even while clocked out. Returned `200 {"ok": True, "clocked_in": False, "status": "standby"}` instead of error 400. Extended `load_agent_foreground` max age to 180s.
+  5. **Network Timeout & UI Unfreeze Guards:** Added 12s `AbortController` timeout to `frontend/src/api.js`, guaranteed `setReady(true)` in `App.jsx` with a 3.5s safety timer, and added a 3.0s unfreeze timer to `Desk.jsx` so the Clock in button can never freeze on "Connecting...".
+- **Files Affected:** `main.py`, `analytics.py`, `agent/desktrack_agent.py`, `frontend/src/api.js`, `frontend/src/App.jsx`, `frontend/src/pages/Desk.jsx`, `frontend/src/pages/Live.jsx`, `DECISIONS.md`.

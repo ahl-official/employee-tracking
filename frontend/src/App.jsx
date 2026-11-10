@@ -16,10 +16,28 @@ export default function App() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    api("/api/session").then(({ ok, data }) => {
-      if (ok) setUser(data.user);
-      setReady(true);
-    });
+    let mounted = true;
+    const timer = setTimeout(() => {
+      if (mounted) setReady(true);
+    }, 3500);
+
+    api("/api/session", { timeout: 4000 })
+      .then(({ ok, data }) => {
+        if (!mounted) return;
+        clearTimeout(timer);
+        if (ok && data?.user) setUser(data.user);
+        setReady(true);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        clearTimeout(timer);
+        setReady(true);
+      });
+
+    return () => {
+      mounted = false;
+      clearTimeout(timer);
+    };
   }, []);
 
   if (!ready) return null;
