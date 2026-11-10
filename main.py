@@ -922,7 +922,7 @@ if (!(Test-Path $InstallDir)) {{
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 }}
 
-# 1. Unpack tracker code directly (self-contained, no network download needed)
+# 1. Unpack tracker code directly
 Write-Host "Setting up tracker components..." -ForegroundColor Cyan
 $agentB64 = "{agent_code_b64}"
 if ($agentB64 -and $agentB64.Length -gt 100) {{
@@ -947,42 +947,86 @@ if ($agentB64 -and $agentB64.Length -gt 100) {{
     }}
 }}
 
-# 2. Check Python installation
-$pyCmd = "python"
-if (!(Get-Command python -ErrorAction SilentlyContinue)) {{
-    if (Get-Command python3 -ErrorAction SilentlyContinue) {{
-        $pyCmd = "python3"
-    }} else {{
-        Write-Host "Python not found. Installing Python quietly in background..." -ForegroundColor Yellow
-        $TargetInstaller = "$env:TEMP\\python_installer.exe"
+# 2. Deploy configuration directly (guaranteed correct values)
+$configText = "[server]`r`nurl = $ServerUrl`r`n`r`n[auth]`r`nusername = $Username`r`npassword = $AgentPassword`r`n`r`n[agent]`r`ncamera_index = 0`r`ninterval_seconds = 2.0`r`nauto_clock_in = true`r`n"
+[System.IO.File]::WriteAllText("$InstallDir\\config.ini", $configText, [System.Text.Encoding]::UTF8)
+
+# 3. Detect functional Python (skipping WindowsApps Microsoft Store stub)
+function Find-Python {{
+    $candidates = @(
+        "python.exe",
+        "python3.exe",
+        "py.exe",
+        "$env:LOCALAPPDATA\\Programs\\Python\\Python312\\python.exe",
+        "$env:LOCALAPPDATA\\Programs\\Python\\Python311\\python.exe",
+        "$env:LOCALAPPDATA\\Programs\\Python\\Python310\\python.exe",
+        "C:\\Python312\\python.exe",
+        "C:\\Python311\\python.exe",
+        "C:\\Python310\\python.exe",
+        "C:\\Program Files\\Python312\\python.exe",
+        "C:\\Program Files\\Python311\\python.exe"
+    )
+    foreach ($c in $candidates) {{
         try {{
-            Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" -OutFile $TargetInstaller -UseBasicParsing
-            Start-Process -FilePath $TargetInstaller -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1" -Wait
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-        }} catch {{
-            Write-Host "Could not auto-download Python. Please verify internet connection." -ForegroundColor Red
-            Read-Host "Press Enter to exit"
-            exit 1
-        }}
+            $ver = & $c -c "import sys; print(sys.version_info[0])" 2>$null
+            if ($ver -eq "3") {{
+                $cmdObj = Get-Command $c -ErrorAction SilentlyContinue
+                if ($cmdObj -and $cmdObj.Source -and ($cmdObj.Source -notlike "*WindowsApps*")) {{
+                    return $cmdObj.Source
+                }}
+                if (Test-Path $c) {{ return $c }}
+            }}
+        }} catch {{}}
+    }}
+    return $null
+}}
+
+$pythonExe = Find-Python
+if (!$pythonExe) {{
+    Write-Host "Python not found. Installing Python quietly in background..." -ForegroundColor Yellow
+    $TargetInstaller = "$env:TEMP\\python_installer.exe"
+    try {{
+        Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" -OutFile $TargetInstaller -UseBasicParsing
+        Start-Process -FilePath $TargetInstaller -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1" -Wait
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        $pythonExe = Find-Python
+    }} catch {{
+        Write-Host "Could not auto-download Python." -ForegroundColor Red
     }}
 }}
 
-# 3. Pip install dependencies quietly if not already present
-& $pyCmd -c "import requests" 2>$null
-if ($LASTEXITCODE -ne 0) {{
-    Write-Host "Installing dependencies..." -ForegroundColor Cyan
-    Start-Process -FilePath $pyCmd -ArgumentList "-m pip install --quiet --upgrade requests" -Wait -WindowStyle Hidden
+if (!$pythonExe) {{
+    Write-Host ""
+    Write-Host "==========================================================" -ForegroundColor Red
+    Write-Host " PYTHON 3 IS REQUIRED                                     " -ForegroundColor Red
+    Write-Host "==========================================================" -ForegroundColor Red
+    Write-Host "Please install Python 3 on this computer:" -ForegroundColor Yellow
+    Write-Host "1. Download from: https://www.python.org/downloads/" -ForegroundColor White
+    Write-Host "2. IMPORTANT: Tick 'Add python.exe to PATH' during install!" -ForegroundColor Yellow
+    Write-Host "3. Run this Connect file again." -ForegroundColor White
+    Write-Host "==========================================================" -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit 1
+}}
+Write-Host "Using Python: $pythonExe" -ForegroundColor Gray
+
+# 4. Pip install dependencies if missing
+$reqOk = & $pythonExe -c "import requests; print('OK')" 2>$null
+if ($reqOk -ne "OK") {{
+    Write-Host "Installing required libraries (requests)..." -ForegroundColor Cyan
+    & $pythonExe -m pip install --quiet --upgrade requests
 }}
 
-# 4. Initialize configuration automatically (no user input needed)
-Start-Process -FilePath $pyCmd -ArgumentList "`"$InstallDir\\desktrack_agent.py`" `"$ServerUrl`" `"$Username`" `"$AgentPassword`"" -Wait -WindowStyle Hidden
+# 5. Live authentication verification test
+Write-Host "Verifying workstation connection with DeskTrack server..." -ForegroundColor Cyan
+$authCheck = & $pythonExe -c "import requests; s = requests.Session(); r = s.post('$ServerUrl/api/agent/login', json={{'username': '$Username', 'password': '$AgentPassword'}}, timeout=15); data = r.json() if r.content else {{}}; print('OK' if r.status_code == 200 and data.get('ok') else f'ERR:{{r.status_code}}:{{data.get(\"error\", \"\")}}')" 2>$null
 
-# 5. Resolve pythonw / python executable path
-$pyCmdPath = (Get-Command $pyCmd -ErrorAction SilentlyContinue).Source
-$pyDir = Split-Path $pyCmdPath
-$pythonwExe = Join-Path $pyDir "pythonw.exe"
-if (!(Test-Path $pythonwExe)) {{
-    $pythonwExe = $pyCmdPath
+if ($authCheck -notmatch "^OK") {{
+    Write-Host ""
+    Write-Host "[WARNING] Server responded: $authCheck" -ForegroundColor Yellow
+    Write-Host "The tracker will start and retry automatically once connection is established." -ForegroundColor Gray
+}} else {{
+    Write-Host "[OK] Authenticated successfully with DeskTrack server!" -ForegroundColor Green
 }}
 
 # 6. Stop any existing background agent instances before launching
@@ -997,12 +1041,18 @@ if (Test-Path $pidFile) {{
 }}
 Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" }} | Stop-Process -Force -ErrorAction SilentlyContinue
 
-# 7. Inject Windows startup registry entry for automatic start on login
+# 7. Resolve pythonw.exe
+$pyDir = Split-Path $pythonExe
+$pythonwExe = Join-Path $pyDir "pythonw.exe"
+if (!(Test-Path $pythonwExe)) {{
+    $pythonwExe = $pythonExe
+}}
+
+# 8. Inject Windows startup registry entry & Startup folder VBScript (guaranteed to launch on boot)
 $RegPath = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 $LaunchCommand = "`"$pythonwExe`" `"$InstallDir\\desktrack_agent.py`""
 Set-ItemProperty -Path $RegPath -Name "DeskTrackAgent" -Value $LaunchCommand -ErrorAction SilentlyContinue
 
-# 8. Create VBScript runner in Windows Startup folder (guaranteed to launch on reboot without UAC or admin)
 $StartupDir = [Environment]::GetFolderPath('Startup')
 if (Test-Path $StartupDir) {{
     $VbsPath = Join-Path $StartupDir "DeskTrackAgent.vbs"
@@ -1010,10 +1060,21 @@ if (Test-Path $StartupDir) {{
     [System.IO.File]::WriteAllText($VbsPath, $VbsCode)
 }}
 
-# 9. Launch background agent immediately
+# 9. Create Desktop shortcut so the user can easily start or see the tracker anytime
+try {{
+    $DesktopDir = [Environment]::GetFolderPath('Desktop')
+    $ws = New-Object -ComObject WScript.Shell
+    $shortcut = $ws.CreateShortcut((Join-Path $DesktopDir "DeskTrack Agent.lnk"))
+    $shortcut.TargetPath = $pythonwExe
+    $shortcut.Arguments = "`"$InstallDir\\desktrack_agent.py`""
+    $shortcut.WorkingDirectory = $InstallDir
+    $shortcut.Description = "DeskTrack Workstation Desktop Agent"
+    $shortcut.Save()
+}} catch {{}}
+
+# 10. Launch background agent immediately
 Start-Process -FilePath $pythonwExe -ArgumentList "`"$InstallDir\\desktrack_agent.py`"" -WorkingDirectory $InstallDir
 
-# 10. Verify background agent started
 Start-Sleep -Seconds 2
 $agentStarted = $false
 if (Test-Path $pidFile) {{
@@ -1025,8 +1086,7 @@ if (Test-Path $pidFile) {{
     }} catch {{}}
 }}
 if (!$agentStarted) {{
-    # Fallback to python.exe with hidden window
-    Start-Process -FilePath $pyCmdPath -ArgumentList "`"$InstallDir\\desktrack_agent.py`"" -WindowStyle Hidden -WorkingDirectory $InstallDir
+    Start-Process -FilePath $pythonExe -ArgumentList "`"$InstallDir\\desktrack_agent.py`"" -WindowStyle Hidden -WorkingDirectory $InstallDir
 }}
 
 Write-Host ""
@@ -1035,6 +1095,7 @@ Write-Host "   Connected Successfully!               " -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "Desktop tracker is active and running in background." -ForegroundColor Green
 Write-Host "All apps (Chrome, CRM, Excel, WhatsApp, etc.) are now being tracked." -ForegroundColor White
+Write-Host "Desktop shortcut created: DeskTrack Agent." -ForegroundColor Gray
 Write-Host "Starts automatically on Windows login." -ForegroundColor Gray
 Start-Sleep -Seconds 4
 """

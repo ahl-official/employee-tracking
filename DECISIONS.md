@@ -299,3 +299,18 @@
   2. Hardened `refresh()` in `Desk.jsx` to always clear `initialLoading` and redirect on 401.
   3. In `toggleClock()`, immediately updated React state and `sessionStorage` with `clocked_in: false, clocked_out_today: true` upon a successful clock-out response, showing the `✅ Shift Completed` button instantaneously.
 - **Files Affected:** `analytics.py`, `frontend/src/pages/Desk.jsx`, `DECISIONS.md`.
+
+---
+
+## Decision 23: Bulletproof Python Detection, Direct Config Generation & Live Auth Verification in Connector
+- **Date:** 2026-11-10
+- **Problem:**
+  1. **WindowsApps Python Alias Trap:** On modern Windows 10/11 machines without Python installed (standard non-developer workstations like CRM, Digital Marketing, Process Coordinators), Microsoft places a dummy 0-byte execution alias at `%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe`. `Get-Command python` in the old launcher returned true, bypassing the auto-installer! When executed, it failed or opened the Windows Store silently in the background (`-WindowStyle Hidden`), leaving Python uninstalled.
+  2. **Circular Dependency on Broken Python:** The launcher previously called `Start-Process $pyCmd "desktrack_agent.py" $ServerUrl $Username $AgentPassword` to write `config.ini`. When Python wasn't working, `config.ini` was never created.
+  3. **Silent Failure & Premature Success Display:** The installer used `-WindowStyle Hidden` and printed `Connected Successfully!` even when Python was absent, requests failed to install, or the background process never started.
+- **Decision:**
+  1. **Filtered Python Detection:** Added `Find-Python` in `main.py`'s `_build_connector_bat` that tests `sys.version_info[0] == 3`, checks standard install directories (`LOCALAPPDATA\Programs\Python`, `C:\Python311`, etc.), and explicitly filters out any path containing `*WindowsApps*`. If missing, downloads and installs official Python 3.11 with `PrependPath=1`.
+  2. **Direct Configuration Generation:** PowerShell directly writes UTF-8 `config.ini` before running Python, eliminating circular dependency on Python execution.
+  3. **Live Authentication Verification:** Added a pre-launch verification check against `/api/agent/login` using Python and `requests`, providing immediate visual feedback: `[OK] Authenticated successfully with DeskTrack server!`.
+  4. **Dual Persistence & Desktop Shortcut:** In addition to the Windows Registry `Run` entry and Startup folder `.vbs` runner, created a Desktop shortcut (`DeskTrack Agent.lnk`) for manual startup and easy verification.
+- **Files Affected:** `main.py`, `DECISIONS.md`.
