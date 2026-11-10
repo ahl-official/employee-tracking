@@ -285,3 +285,17 @@
   4. **In-Memory Embeddings & Single-Pass Detection:** Added `_EMBEDS_CACHE` in `face_id.py` and passed pre-detected face boxes from `detector.annotate` into `face_id.verify`, cutting YuNet inference by 50%.
   5. **Static Asset Caching:** Added `public, max-age=31536000, immutable` headers for Vite hashed static assets in `/assets/`.
 - **Files Affected:** `models.py`, `database.py`, `analytics.py`, `face_id.py`, `main.py`, `DECISIONS.md`.
+
+---
+
+## Decision 22: Fix Connecting Freeze, Activity Days NameError & Instant Clock-Out State Transition
+- **Date:** 2026-11-10
+- **Problem:**
+  1. **HTTP 500 Crash on `/api/me`:** In `analytics.py`, `cut = utc_now() - timedelta(...)` threw `NameError: name 'utc_now' is not defined` because `utc_now` was not imported. Because every `/api/me` call failed with HTTP 500, `Desk.jsx` never received user state.
+  2. **Page Stuck on "Connecting...":** In `Desk.jsx`, `refresh()` had `if (!ok) return;` before `setInitialLoading(false)`. Any API error or 401 left `initialLoading` permanently `true`, locking the UI on "Connecting to desk..." and "Connecting...".
+  3. **Clock-Out State Desynchronization:** Clocking out called `refresh()` without immediately applying the local clocked-out state. When `refresh()` failed, the screen did not update to `✅ Shift Completed` or save the summary.
+- **Decision:**
+  1. Defined `utc_now()` in `analytics.py` using `datetime.now(timezone.utc)`.
+  2. Hardened `refresh()` in `Desk.jsx` to always clear `initialLoading` and redirect on 401.
+  3. In `toggleClock()`, immediately updated React state and `sessionStorage` with `clocked_in: false, clocked_out_today: true` upon a successful clock-out response, showing the `✅ Shift Completed` button instantaneously.
+- **Files Affected:** `analytics.py`, `frontend/src/pages/Desk.jsx`, `DECISIONS.md`.

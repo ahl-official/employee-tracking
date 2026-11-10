@@ -354,21 +354,30 @@ export default function Desk() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const { ok, data } = await api("/api/me");
-    if (!ok) return;
-    meRef.current = data;
-    setMe(data);
-    setInitialLoading(false);
     try {
-      sessionStorage.setItem("desktrack_me", JSON.stringify(data));
-    } catch {}
-    if (data.clocked_in && !streamRef.current) {
-      camTried.current = true;
-      startCamera(cameraIdRef.current);
-    }
-    if (!data.clocked_in && streamRef.current) stopCamera();
-    if (!data.clocked_in) {
-      setEmptyMsg("Clock in — Chrome will ask to use your camera. Allow it.");
+      const { ok, status, data } = await api("/api/me");
+      setInitialLoading(false);
+      if (!ok) {
+        if (status === 401) {
+          window.location.href = "/login";
+        }
+        return;
+      }
+      meRef.current = data;
+      setMe(data);
+      try {
+        sessionStorage.setItem("desktrack_me", JSON.stringify(data));
+      } catch {}
+      if (data.clocked_in && !streamRef.current) {
+        camTried.current = true;
+        startCamera(cameraIdRef.current);
+      }
+      if (!data.clocked_in && streamRef.current) stopCamera();
+      if (!data.clocked_in) {
+        setEmptyMsg("Clock in — Chrome will ask to use your camera. Allow it.");
+      }
+    } catch {
+      setInitialLoading(false);
     }
   }, [startCamera, stopCamera]);
 
@@ -447,11 +456,24 @@ export default function Desk() {
         body: JSON.stringify({ action: "out" }),
       });
       if (!ok) {
-        alert(data.error || "Could not update.");
+        alert(data?.error || data || "Could not update.");
         return;
       }
       stopCamera();
       camTried.current = false;
+      if (data) {
+        const updated = {
+          ...(meRef.current || {}),
+          clocked_in: false,
+          clocked_out_today: true,
+          today: { ...(meRef.current?.today || {}), ...(data.today || {}) },
+        };
+        meRef.current = updated;
+        setMe(updated);
+        try {
+          sessionStorage.setItem("desktrack_me", JSON.stringify(updated));
+        } catch {}
+      }
       await refresh();
       return;
     }
@@ -462,17 +484,23 @@ export default function Desk() {
       body: JSON.stringify({ action: "in" }),
     });
     if (!ok) {
-      alert(data.error || "Could not update.");
+      alert(data?.error || data || "Could not update.");
       stopCamera();
       return;
     }
     // Apply timer snapshot from clock-in immediately (don't wait for next poll)
-    if (data.today) {
-      setMe((prev) =>
-        prev
-          ? { ...prev, clocked_in: true, clocked_out_today: false, today: { ...prev.today, ...data.today } }
-          : prev
-      );
+    if (data) {
+      const updated = {
+        ...(meRef.current || {}),
+        clocked_in: true,
+        clocked_out_today: false,
+        today: { ...(meRef.current?.today || {}), ...(data.today || {}) },
+      };
+      meRef.current = updated;
+      setMe(updated);
+      try {
+        sessionStorage.setItem("desktrack_me", JSON.stringify(updated));
+      } catch {}
     }
     await refresh();
   }

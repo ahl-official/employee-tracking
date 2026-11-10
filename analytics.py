@@ -6,6 +6,10 @@ import config
 from models import Heartbeat, WorkSession, TaskRequest
 
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def local_now():
     return datetime.now(config.TIMEZONE)
 
