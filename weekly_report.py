@@ -78,6 +78,7 @@ def build_weekly_report(db: SessionLocal | None = None) -> str:
     if own:
         db = SessionLocal()
     try:
+        analytics.close_overnight_sessions(db)
         employees = (
             db.query(User)
             .filter(User.role == "employee")

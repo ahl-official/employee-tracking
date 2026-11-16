@@ -357,3 +357,16 @@
   3. **Multi-Tier Window Detection & Pattern Matching:** Upgraded `foreground_window()` in `agent/desktrack_agent.py` with dual-level process querying (`0x1000` and `0x0410`), title-suffix app inference (Chrome, Edge, Excel, VS Code, Word, etc.), and a 6-second retention buffer during momentary window transitions.
   4. **Extended App TTL:** Expanded `_resolve_app_fields` threshold to 300s (5 minutes) and added app title inference fallback.
 - **Files Affected:** `analytics.py`, `main.py`, `agent/desktrack_agent.py`, `DECISIONS.md`.
+
+---
+
+## Decision 26: Prevent Overnight Shift Leaks & Persistent Auto-Clockout Commits
+- **Date:** 2026-11-16
+- **Problem:**
+  1. **Uncommitted Auto-Clockout in DB:** `close_overnight_sessions` set `row.clock_out` in memory but did not call `db.commit()`. When invoked during read-only requests (like `/api/report` or `/api/me`), the transaction was discarded upon session close, leaving `work_sessions.clock_out` as `NULL` in the database.
+  2. **12-Hour Idle Bleed on Next Day:** In `session_intervals`, when computing today's metrics, `day_end <= now` evaluated to `False` (since today hasn't finished yet). For an unclosed session from yesterday, `session_intervals` executed `cout = min(now, day_end)` (today morning/afternoon). It then evaluated `a = max(cin, day_start)` (midnight 00:00) and `b = min(cout, day_end)` (today morning), creating a massive 10 to 12 hour ghost session starting at midnight with zero activity, charging the employee 9 to 12 hours of fake idle time.
+- **Decision:**
+  1. **Hard Day-Start Boundary for Prior Sessions:** In `session_intervals`, any session where `cin < day_start` is strictly prevented from bleeding into the current day (`cout = min(last_hb + 5m, day_start)`), making it mathematically impossible for yesterday's shift to generate session intervals or idle time today.
+  2. **Persistent DB Commits in `close_overnight_sessions`:** Added explicit `db.commit()` so auto-closed sessions are permanently written to SQLite.
+  3. **Weekly Report Sanitization:** Added `close_overnight_sessions(db)` at the start of `build_weekly_report`.
+- **Files Affected:** `analytics.py`, `weekly_report.py`, `DECISIONS.md`.

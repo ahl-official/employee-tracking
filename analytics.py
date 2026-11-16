@@ -247,6 +247,7 @@ def close_overnight_sessions(db, user_id: int | None = None) -> None:
     q = db.query(WorkSession).filter(WorkSession.clock_out.is_(None))
     if user_id is not None:
         q = q.filter(WorkSession.user_id == user_id)
+    modified = False
     for row in q.all():
         cin = as_dt(row.clock_in)
         if cin is not None and cin < start:
@@ -266,6 +267,12 @@ def close_overnight_sessions(db, user_id: int | None = None) -> None:
                 row.clock_out = min(last_dt + timedelta(minutes=5), start)
             else:
                 row.clock_out = min(cin + timedelta(minutes=30), start)
+            modified = True
+    if modified:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
 
 
 def auto_clock_in_if_needed(db, user_id: int) -> bool:
@@ -312,7 +319,26 @@ def session_intervals(
         cin = as_dt(row.clock_in)
         if cin is None:
             continue
-        if row.clock_out is not None:
+        if cin < day_start:
+            # Session started on a PREVIOUS day. It must NEVER bleed into this day!
+            if row.clock_out is not None:
+                cout = min(as_dt(row.clock_out), day_start)
+            else:
+                last_hb = (
+                    db.query(Heartbeat.created_at)
+                    .filter(
+                        Heartbeat.user_id == user_id,
+                        Heartbeat.created_at >= cin,
+                        Heartbeat.created_at < day_start,
+                    )
+                    .order_by(Heartbeat.created_at.desc())
+                    .first()
+                )
+                if last_hb and last_hb[0]:
+                    cout = min(as_dt(last_hb[0]) + timedelta(minutes=5), day_start)
+                else:
+                    cout = min(cin + timedelta(minutes=30), day_start)
+        elif row.clock_out is not None:
             cout = as_dt(row.clock_out)
             # If clock_out was artificially closed at midnight/day_end for a past day,
             # trim it to the employee's actual last recorded activity.
@@ -332,7 +358,7 @@ def session_intervals(
                     if (day_end - last_hb_dt).total_seconds() > 1800:
                         cout = min(last_hb_dt + timedelta(minutes=5), day_end)
         else:
-            # Open session: if past day left unclosed, cap at last activity
+            # Open session started today: if past day left unclosed, cap at last activity
             if day_end <= now:
                 last_hb = (
                     db.query(Heartbeat.created_at)
