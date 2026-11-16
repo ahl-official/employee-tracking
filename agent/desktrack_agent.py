@@ -51,9 +51,15 @@ def kill_previous_instance() -> None:
     if PID_PATH.is_file():
         try:
             old_pid = int(PID_PATH.read_text(encoding="utf-8").strip())
-            if old_pid != os.getpid():
+            if old_pid != os.getpid() and old_pid > 0:
                 import signal
-                os.kill(old_pid, signal.SIGTERM)
+                try:
+                    os.kill(old_pid, signal.SIGTERM)
+                except Exception:
+                    pass
+                if sys.platform == "win32":
+                    import subprocess
+                    subprocess.run(["taskkill", "/F", "/PID", str(old_pid)], capture_output=True)
                 time.sleep(0.4)
         except Exception:
             pass
@@ -101,30 +107,82 @@ def prevent_sleep(on: bool) -> None:
         pass
 
 
+_LAST_FG_APP = "Desktop"
+_LAST_FG_TITLE = ""
+_LAST_FG_TIME = 0.0
+
+_APP_TITLE_PATTERNS = (
+    (" - Google Chrome", "chrome"),
+    (" - Chrome", "chrome"),
+    (" - Microsoft Edge", "msedge"),
+    (" - Edge", "msedge"),
+    (" - Brave", "brave"),
+    (" - Mozilla Firefox", "firefox"),
+    (" - Firefox", "firefox"),
+    (" - Excel", "EXCEL"),
+    (" - Word", "WINWORD"),
+    (" - PowerPoint", "POWERPNT"),
+    (" - Visual Studio Code", "Code"),
+    (" - Cursor", "Cursor"),
+    (" - WhatsApp", "WhatsApp"),
+    (" - Slack", "slack"),
+    (" - Notepad", "notepad"),
+)
+
+
 def foreground_window() -> tuple[str, str]:
+    global _LAST_FG_APP, _LAST_FG_TITLE, _LAST_FG_TIME
     if sys.platform != "win32":
         return "Unknown", ""
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
     hwnd = user32.GetForegroundWindow()
+    now_ts = time.time()
     if not hwnd:
+        if now_ts - _LAST_FG_TIME < 6.0:
+            return _LAST_FG_APP, _LAST_FG_TITLE
         return "Desktop", ""
+
     length = user32.GetWindowTextLengthW(hwnd)
     buf = ctypes.create_unicode_buffer(length + 1)
     user32.GetWindowTextW(hwnd, buf, length + 1)
     title = (buf.value or "").strip()
+
     pid = ctypes.c_ulong()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    handle = kernel32.OpenProcess(0x1000, False, pid.value)
     app = "Unknown"
-    if handle:
-        try:
-            size = ctypes.c_ulong(260)
-            path_buf = ctypes.create_unicode_buffer(260)
-            if kernel32.QueryFullProcessImageNameW(handle, 0, path_buf, ctypes.byref(size)):
-                app = Path(path_buf.value).stem or "Unknown"
-        finally:
-            kernel32.CloseHandle(handle)
+
+    if pid.value > 0:
+        # Try PROCESS_QUERY_LIMITED_INFORMATION (0x1000) then PROCESS_QUERY_INFORMATION | PROCESS_VM_READ (0x0410)
+        for access in (0x1000, 0x0410):
+            handle = kernel32.OpenProcess(access, False, pid.value)
+            if handle:
+                try:
+                    size = ctypes.c_ulong(260)
+                    path_buf = ctypes.create_unicode_buffer(260)
+                    if kernel32.QueryFullProcessImageNameW(handle, 0, path_buf, ctypes.byref(size)):
+                        app = Path(path_buf.value).stem or "Unknown"
+                        break
+                finally:
+                    kernel32.CloseHandle(handle)
+
+    # If process query was blocked, infer from window title
+    if (app == "Unknown" or not app) and title:
+        for suffix, inferred_app in _APP_TITLE_PATTERNS:
+            if title.endswith(suffix):
+                app = inferred_app
+                break
+
+    if app and app != "Unknown":
+        _LAST_FG_APP = app[:80]
+        _LAST_FG_TITLE = title[:180]
+        _LAST_FG_TIME = now_ts
+        return _LAST_FG_APP, _LAST_FG_TITLE
+
+    # Momentary blank during window switch — retain last known for 6s
+    if now_ts - _LAST_FG_TIME < 6.0:
+        return _LAST_FG_APP, _LAST_FG_TITLE
+
     return app[:80], title[:180]
 
 

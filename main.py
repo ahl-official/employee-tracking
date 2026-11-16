@@ -1079,7 +1079,7 @@ if (Test-Path $pidFile) {{
         }}
     }} catch {{}}
 }}
-Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "*$InstallDir*" }} | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {{ $_.CommandLine -like "*desktrack_agent.py*" }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
 
 # 7. Resolve pythonw.exe
 $pyDir = Split-Path $pythonExe
@@ -1096,8 +1096,10 @@ Set-ItemProperty -Path $RegPath -Name "DeskTrackAgent" -Value $LaunchCommand -Er
 $StartupDir = [Environment]::GetFolderPath('Startup')
 if (Test-Path $StartupDir) {{
     $VbsPath = Join-Path $StartupDir "DeskTrackAgent.vbs"
-    $VbsCode = "Set WshShell = CreateObject(`"WScript.Shell`")`nWshShell.Run `"`"`"$pythonwExe`"`" `"`"$InstallDir\\desktrack_agent.py`"`"`, 0, False"
-    [System.IO.File]::WriteAllText($VbsPath, $VbsCode)
+    $q = [char]34
+    $vbsLine1 = 'Set WshShell = CreateObject(' + $q + 'WScript.Shell' + $q + ')'
+    $vbsLine2 = 'WshShell.Run ' + $q + $q + $q + $pythonwExe + $q + $q + ' ' + $q + $q + $q + $InstallDir + '\\desktrack_agent.py' + $q + $q + $q + ', 0, False'
+    [System.IO.File]::WriteAllLines($VbsPath, @($vbsLine1, $vbsLine2), [System.Text.Encoding]::ASCII)
 }}
 
 # 9. Create Desktop shortcut so the user can easily start or see the tracker anytime
@@ -1156,11 +1158,21 @@ def generate_one_click_launcher(request: Request, db: Session = Depends(get_db))
 
 
 def _resolve_app_fields(user_id: int, payload: dict) -> tuple[str, str, str]:
-    fg = load_agent_foreground(user_id, max_age=90.0)
-    if fg.get("app"):
+    fg = load_agent_foreground(user_id, max_age=300.0)
+    fg_app = str(fg.get("app") or "").strip()
+    fg_title = str(fg.get("title") or "").strip()
+    if fg_app and fg_app.lower() != "unknown":
         return (
-            str(fg.get("app") or "Unknown")[:80],
-            str(fg.get("title") or "")[:180],
+            fg_app[:80],
+            fg_title[:180],
+            "laptop",
+        )
+    if fg_title:
+        # Infer app from title if process name was unresolvable
+        inferred = "chrome" if "chrome" in fg_title.lower() else "laptop"
+        return (
+            inferred[:80],
+            fg_title[:180],
             "laptop",
         )
     return (

@@ -456,15 +456,14 @@ def summarize(db, user_id: int, start: datetime, end: datetime) -> dict:
             away += use
             # Do NOT accumulate active app time when employee is away from desk or locked
             return
-        if row.present == 1:
+        # If camera detects face (present == 1) OR agent reports active PC usage (present is None): employee is seated
+        if row.present == 1 or row.present is None:
             seated += use
             add_app_bucket(use)
             if task_intervals:
                 # Track how much seated time occurred during an approved task
                 task_seated_s += overlap_intervals(t0, t1, task_intervals) * scale
             return
-        # present is None / unknown — agent heartbeat before camera or between frames
-        add_app_bucket(use)
 
     grace = float(getattr(config, "PRESENCE_GAP_GRACE_SECONDS", 900))
 
